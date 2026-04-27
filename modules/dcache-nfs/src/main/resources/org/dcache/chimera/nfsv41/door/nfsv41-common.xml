@@ -97,7 +97,14 @@
         <property name="dataSource" ref="dataSource"/>
     </bean>
 
-    <bean id="liquibase" class="org.dcache.util.SpringLiquibase">
+    <bean id="liquibase-pre" class="org.dcache.util.SpringLiquibase">
+        <description>Database schema Pre-manager</description>
+        <property name="dataSource" ref="dataSource"/>
+        <property name="changeLog" value="classpath:${nfs.db.schema.changelog-pre}"/>
+        <property name="shouldUpdate" value="${nfs.db.schema.auto}"/>
+    </bean>
+
+    <bean id="liquibase" class="org.dcache.util.SpringLiquibase" depends-on="liquibase-pre">
         <description>Database schema manager</description>
         <property name="dataSource" ref="dataSource"/>
         <property name="changeLog" value="classpath:${nfs.db.schema.changelog}"/>
@@ -261,6 +268,7 @@
         <property name="exportFile" ref="export"/>
         <property name="idMapper" ref="id-mapper"/>
         <property name="portNumber" value="${nfs.net.port}"/>
+        <property name="quotaPortNumber" value="${nfs.net.rquota.port}"/>
         <property name="versions" value="${nfs.version}"/>
         <property name="enableRpcsecGss" value="${nfs.rpcsec_gss}"/>
         <property name="loginBrokerPublisher" ref="lb"/>

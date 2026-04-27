@@ -183,7 +183,7 @@ public final class BulkServiceCommands implements CellCommandListener {
     /**
      * name | class | type | permits
      */
-    private static final String FORMAT_ACTIVITY = "%-20s | %100s | %7s | %10s";
+    private static final String FORMAT_ACTIVITY = "%-20s | %100s | %7s";
 
     /**
      * name | required | description
@@ -444,10 +444,6 @@ public final class BulkServiceCommands implements CellCommandListener {
               usage = "Whether the request has this set to true or false.")
         Boolean clearOnFailure;
 
-        @Option(name = "delayClear",
-              usage = "True means the request has a non-zero value of this.")
-        Boolean delayClear;
-
         @Option(name = "expandDirectories",
               valueSpec = "NONE|TARGETS|ALL",
               usage = "The recursion depth of the request.")
@@ -489,8 +485,8 @@ public final class BulkServiceCommands implements CellCommandListener {
             }
 
             rFilter = new BulkRequestFilter(beforeStart, afterStart, owners, urlPrefixes, ids,
-                  activities, statuses, cancelOnFailure, clearOnSuccess, clearOnFailure, delayClear,
-                  depth);
+                                            activities, statuses, cancelOnFailure, clearOnSuccess, clearOnFailure,
+                                            depth);
             rFilter.setId(id);
         }
 
@@ -524,7 +520,6 @@ public final class BulkServiceCommands implements CellCommandListener {
                   && activity == null
                   && clearOnFailure == null
                   && clearOnSuccess == null
-                  && delayClear == null
                   && expandDirectories == null
                   && status == null;
         }
@@ -552,7 +547,7 @@ public final class BulkServiceCommands implements CellCommandListener {
                 return "There are no mapped activities!";
             }
 
-            return String.format(FORMAT_ACTIVITY, "NAME", "CLASS", "TYPE", "RATE")
+            return String.format(FORMAT_ACTIVITY, "NAME", "CLASS", "TYPE")
                   + "\n" + activities;
         }
     }

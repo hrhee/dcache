@@ -102,40 +102,38 @@ public final class StageActivity extends PinManagerActivity {
         super(name, targetType);
     }
 
-    public void cancel(BulkRequestTarget target) {
-        super.cancel(target);
+    public void cancel(String prefix, BulkRequestTarget target) {
+        super.cancel(prefix, target);
         try {
-            pinManager.send(unpinMessage(id, target));
+            pinManager.send(unpinMessage(id, prefix, target));
         } catch (CacheException e) {
             target.setErrorObject(new BulkServiceException("unable to fetch pnfsid of target in "
-                  + "order to cancel staging.", e));
+                                                           + "order to cancel staging.", e));
         }
     }
 
     @Override
-    public ListenableFuture<Message> perform(String rid, long tid, FsPath target,
+    public ListenableFuture<Message> perform(String rid, long tid, String prefix, FsPath path,
           FileAttributes attributes) {
         id = rid;
 
         try {
             /*
-             *  refetch the attributes because RP is not stored in the bulk database.
+             *  refetch the attributes because Retention Policy is not stored in the bulk database.
              */
-            attributes = getAttributes(target);
 
+            FsPath absolutePath = BulkRequestTarget.computeFsPath(prefix, path.toString());
+            attributes = getAttributes(absolutePath);
+
+            //Checks for files' RetentionPolicy to be CUSTODIAL
             checkStageable(attributes);
 
             PinManagerPinMessage message
                   = new PinManagerPinMessage(attributes, getProtocolInfo(),
                   pnfsHandler.getRestriction(),
                   id,
-                  getLifetimeInMillis(target));
+                  getLifetimeInMillis(path));
             message.setSubject(subject);
-
-            Optional<ListenableFuture<Message>> skipOption = skipIfOnline(attributes, message);
-            if (skipOption.isPresent()) {
-                return skipOption.get();
-            }
 
             return pinManager.send(message, Long.MAX_VALUE);
         } catch (URISyntaxException | CacheException e) {
@@ -175,10 +173,11 @@ public final class StageActivity extends PinManagerActivity {
     }
 
     private void checkStageable(FileAttributes attributes) throws CacheException {
+        //check if it's a regular file
         checkPinnable(attributes);
 
         if (attributes.getRetentionPolicy() != RetentionPolicy.CUSTODIAL) {
-            throw new CacheException(INVALID_ARGS, "File not on tape.");
+            throw new CacheException(INVALID_ARGS, "Cannot stage DISK only files");
         }
     }
 

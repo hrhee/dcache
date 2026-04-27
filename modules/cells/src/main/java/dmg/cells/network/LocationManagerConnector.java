@@ -42,20 +42,25 @@ public class LocationManagerConnector
     private volatile int _retries;
     private volatile boolean _isRunning;
 
-    public LocationManagerConnector(String cellName, String args, SocketFactory socketFactory) {
-        super(cellName, "System", args);
-        Args a = getArgs();
-        _domain = a.getOpt("domain");
+    /**
+     * Create a new connector to the location manager.
+     * @param cellName the name of this connector as a cell
+     * @param socketFactory the socket factory to use for creating connections
+     * @param remoteDomain the domain name of the location manager
+     * @param endpoint the address of the location manager
+     */
+    public LocationManagerConnector(String cellName, SocketFactory socketFactory, String remoteDomain, InetSocketAddress endpoint) {
+        super(cellName, "System");
+        _domain = remoteDomain;
         _ssf = requireNonNull(socketFactory);
-        HostAndPort where = HostAndPort.fromString(a.getOpt("where"));
-        _address = new InetSocketAddress(where.getHost(), where.getPort());
+        _address = endpoint;
     }
 
     @Override
     protected void started() {
         _thread = getNucleus().newThread(this, "TunnelConnector-" + _domain);
-        _thread.start();
         _isRunning = true;
+        _thread.start();
     }
 
     private StreamEngine connect()
@@ -102,8 +107,8 @@ public class LocationManagerConnector
                     } finally {
                         getNucleus().kill(tunnel.getCellName());
                     }
-                } catch (InterruptedIOException | ClosedByInterruptException e) {
-                    throw e;
+                } catch (InterruptedIOException | InterruptedException | ClosedByInterruptException e) {
+                    _log.warn("Connection to {} ({}) interrupted. Reason: {}", _domain, _address, e.toString());
                 } catch (ExecutionException | IOException e) {
                     String error = Exceptions.meaningfulMessage(Throwables.getRootCause(e));
                     _log.warn(AlarmMarkerFactory.getMarker(PredefinedAlarm.LOCATION_MANAGER_FAILURE,
@@ -116,11 +121,16 @@ public class LocationManagerConnector
                 _status = "Sleeping";
                 long sleep = random.nextInt(16000) + 4000;
                 _log.warn("Sleeping {} seconds", sleep / 1000);
-                Thread.sleep(sleep);
+                try {
+                    Thread.sleep(sleep);
+                } catch (InterruptedException e) {
+                    // restore interrupted status
+                    Thread.currentThread().interrupt();
+                }
             }
-        } catch (InterruptedIOException | InterruptedException | ClosedByInterruptException ignored) {
         } finally {
             NDC.pop();
+            _thread = null;
             _status = "Terminated";
         }
     }

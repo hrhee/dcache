@@ -78,6 +78,7 @@ import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.GuardedBy;
 import org.dcache.cells.CellStub;
+import org.dcache.namespace.FileAttribute;
 import org.dcache.poolmanager.CostException;
 import org.dcache.poolmanager.Partition;
 import org.dcache.poolmanager.PartitionManager;
@@ -363,10 +364,12 @@ public class RequestContainerV5
                          *
                          * in this construction we will fall down to next case
                          */
-                        if (rph.getPoolCandidate().equals(POOL_UNKNOWN_STRING)) {
+                        if (rph.getPoolCandidate().equals(POOL_UNKNOWN_STRING) || rph.expectedOnPool(poolName)) {
                             LOGGER.info("Restore Manager : retrying : {}", rph);
                             rph.retry();
                         }
+
+                        // fall through to retry requests scheduled on that pool
                     case PoolStatusChangedMessage.DOWN:
                         /*
                          * if pool is down, re-try all request scheduled to this
@@ -738,6 +741,16 @@ public class RequestContainerV5
               .toArray(RestoreHandlerInfo[]::new);
     }
 
+    @VisibleForTesting
+    void fail(String id, int errorCode, String errorMessage) {
+        synchronized (_handlerHash) {
+            PoolRequestHandler rph = _handlerHash.get(id);
+            if (rph != null) {
+                rph.fail(errorCode, errorMessage);
+            }
+        }
+    }
+
     public void messageArrived(CellMessage envelope,
           PoolMgrSelectReadPoolMsg request)
           throws PatternSyntaxException, IOException {
@@ -1029,6 +1042,16 @@ public class RequestContainerV5
             }
         }
 
+        /**
+         * Returns true if file is expected to be on specified pool.
+         * @param poolName pool name to check.
+         * @return true if file is expected to be on specified pool.
+         */
+        public boolean expectedOnPool(String poolName) {
+            return _fileAttributes.isDefined(FileAttribute.LOCATIONS)
+                    && _fileAttributes.getLocations().contains(poolName);
+        }
+
         private String getPoolCandidateState() {
             if (_stageCandidate.isPresent()) {
                 return _stageCandidate.get().name();
@@ -1161,6 +1184,20 @@ public class RequestContainerV5
             _currentRc = code;
             _currentRm = message;
             updateStatus("Failed: " + message);
+
+            switch (_state) {
+                case ST_WAITING_FOR_STAGING:
+                    _stageCandidate.ifPresent(c -> {
+                        // FIXME: we need a new message here
+                        var cancelMessage = new CellMessage(c.address(), "rh kill " + _fileAttributes.getPnfsId());
+                        sendMessage(cancelMessage);
+                    });
+                case ST_WAITING_FOR_POOL_2_POOL:
+                    // FIXME: cancel p2p
+                    break;
+                default:
+                    // noop
+            }
 
             answerRequests();
             nextStep(RequestState.ST_OUT);
@@ -1319,7 +1356,18 @@ public class RequestContainerV5
         }
 
         private boolean isFileStageable() {
-            return _parameter._hasHsmBackend && _storageInfo.isStored();
+            if (!_storageInfo.isStored()) {
+                LOGGER.debug("File is not stageable: not stored.");
+                return false;
+            }
+
+            if (!_parameter._hasHsmBackend) {
+                // REVISIT: include partition name
+                LOGGER.warn("File is not stageable: stage is not allowed by partition configuration.");
+                return false;
+            }
+
+            return true;
         }
 
         private boolean isStagingAllowed() {

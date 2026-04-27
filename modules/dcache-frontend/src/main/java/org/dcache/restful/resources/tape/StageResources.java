@@ -59,12 +59,14 @@ documents or software obtained from this server.
  */
 package org.dcache.restful.resources.tape;
 
+import static org.dcache.http.AuthenticationHandler.getLoginAttributes;
 import static org.dcache.restful.resources.bulk.BulkResources.getRestriction;
 import static org.dcache.restful.resources.bulk.BulkResources.getSubject;
 import static org.dcache.restful.util.HttpServletRequests.getUserRootAwareTargetPrefix;
 import static org.dcache.restful.util.JSONUtils.newBadRequestException;
 
 import com.google.common.base.Strings;
+import diskCacheV111.util.FsPath;
 import diskCacheV111.util.PnfsHandler;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
@@ -84,6 +86,7 @@ import javax.servlet.http.HttpServletRequest;
 import javax.ws.rs.BadRequestException;
 import javax.ws.rs.Consumes;
 import javax.ws.rs.DELETE;
+import javax.ws.rs.ForbiddenException;
 import javax.ws.rs.GET;
 import javax.ws.rs.POST;
 import javax.ws.rs.Path;
@@ -93,8 +96,10 @@ import javax.ws.rs.core.Context;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.Response.Status;
+import org.dcache.auth.attributes.LoginAttributes;
 import org.dcache.auth.attributes.Restriction;
 import org.dcache.cells.CellStub;
+import org.dcache.http.PathMapper;
 import org.dcache.restful.providers.tape.StageRequestInfo;
 import org.dcache.restful.util.HandlerBuilders;
 import org.dcache.restful.util.bulk.BulkServiceCommunicator;
@@ -122,6 +127,7 @@ import org.springframework.stereotype.Component;
 @Api(value = "tape", authorizations = {@Authorization("basicAuth")})
 @Path("tape/stage")
 public final class StageResources {
+
     private static final String STAGE = "STAGE";
 
     @Context
@@ -129,6 +135,9 @@ public final class StageResources {
 
     @Inject
     private BulkServiceCommunicator service;
+
+    @Inject
+    private PathMapper pathMapper;
 
     @Inject
     @Named("pnfs-stub")
@@ -159,6 +168,8 @@ public final class StageResources {
     @PathParam("id") String id) {
         Subject subject = getSubject();
         Restriction restriction = getRestriction();
+        FsPath userRoot = LoginAttributes.getUserRoot(getLoginAttributes(request));
+        FsPath rootPath = pathMapper.effectiveRoot(userRoot, ForbiddenException::new);
 
         BulkRequestInfo lastInfo = null;
         List<BulkRequestTargetInfo> targetInfos = new ArrayList<>();
@@ -199,6 +210,7 @@ public final class StageResources {
           @ApiResponse(code = 401, message = "Unauthorized"),
           @ApiResponse(code = 403, message = "Forbidden"),
           @ApiResponse(code = 404, message = "Not Found"),
+          @ApiResponse(code = 413, message = "Content Too Large"),
           @ApiResponse(code = 429, message = "Too many requests"),
           @ApiResponse(code = 500, message = "Internal Server Error")
     })
@@ -210,7 +222,9 @@ public final class StageResources {
                 + "does not belong to that stage request, this request will fail.", required = true)
                 String requestPayload) {
 
-        JSONObject reqPayload;
+	FsPath userRoot = LoginAttributes.getUserRoot(getLoginAttributes(request));
+        FsPath rootPath = pathMapper.effectiveRoot(userRoot, ForbiddenException::new);
+	JSONObject reqPayload;
         JSONArray paths;
         try {
             reqPayload = new JSONObject(requestPayload);
@@ -225,7 +239,8 @@ public final class StageResources {
         List<String> targetPaths = new ArrayList<>();
         int len = paths.length();
         for (int i = 0; i < len; ++i) {
-            targetPaths.add(paths.getString(i));
+	    String path = paths.getString(i);
+            targetPaths.add(path);
         }
 
         Subject subject = getSubject();
@@ -261,6 +276,7 @@ public final class StageResources {
           @ApiResponse(code = 400, message = "Bad request"),
           @ApiResponse(code = 401, message = "Unauthorized"),
           @ApiResponse(code = 403, message = "Forbidden"),
+          @ApiResponse(code = 413, message = "Content Too Large"),
           @ApiResponse(code = 429, message = "Too many requests"),
           @ApiResponse(code = 500, message = "Internal Server Error")
     })
@@ -281,7 +297,10 @@ public final class StageResources {
         Subject subject = getSubject();
         Restriction restriction = getRestriction();
 
-        BulkRequest request = toBulkRequest(requestPayload);
+        FsPath userRoot = LoginAttributes.getUserRoot(getLoginAttributes(request));
+        FsPath rootPath = pathMapper.effectiveRoot(userRoot, ForbiddenException::new);
+
+        BulkRequest request = toBulkRequest(requestPayload, rootPath);
 
         /*
          *  Frontend sets the URL.  The backend service provides the UUID.
@@ -340,7 +359,7 @@ public final class StageResources {
         return Response.ok().build();
     }
 
-    private BulkRequest toBulkRequest(String requestPayload) {
+    private BulkRequest toBulkRequest(String requestPayload, FsPath rootPath) {
         if (Strings.emptyToNull(requestPayload) == null) {
             throw new BadRequestException("empty request payload.");
         }
@@ -353,7 +372,7 @@ public final class StageResources {
         request.setActivity("STAGE");
 
         PnfsHandler handler = HandlerBuilders.unrestrictedPnfsHandler(pnfsmanager);
-        request.setTargetPrefix(getUserRootAwareTargetPrefix(this.request, null, handler));
+        request.setTargetPrefix(getUserRootAwareTargetPrefix(this.request, rootPath.toString(), handler));
 
         try {
             JSONObject reqPayload = new JSONObject(requestPayload);

@@ -43,6 +43,7 @@ import static org.dcache.xrootd.protocol.XrootdProtocol.kXR_open_apnd;
 import static org.dcache.xrootd.protocol.XrootdProtocol.kXR_open_read;
 import static org.dcache.xrootd.protocol.XrootdProtocol.kXR_open_updt;
 import static org.dcache.xrootd.protocol.XrootdProtocol.kXR_or;
+import static org.dcache.xrootd.protocol.XrootdProtocol.kXR_overQuota;
 import static org.dcache.xrootd.protocol.XrootdProtocol.kXR_ow;
 import static org.dcache.xrootd.protocol.XrootdProtocol.kXR_ox;
 import static org.dcache.xrootd.protocol.XrootdProtocol.kXR_posc;
@@ -65,6 +66,7 @@ import diskCacheV111.util.FileNotFoundCacheException;
 import diskCacheV111.util.FsPath;
 import diskCacheV111.util.NotFileCacheException;
 import diskCacheV111.util.PermissionDeniedCacheException;
+import diskCacheV111.util.QuotaExceededCacheException;
 import diskCacheV111.util.TimeoutCacheException;
 import dmg.cells.nucleus.CellPath;
 import io.netty.channel.ChannelHandlerContext;
@@ -234,6 +236,7 @@ public class XrootdRedirectHandler extends ConcurrentXrootdRequestHandler {
     private final Deque<LoginSessionInfo> _logins;
     private final FsPath _rootPath;
     private final AtomicInteger openRetry = new AtomicInteger(0);
+    private boolean _expectProxy;
 
     /**
      * Custom entries for kXR_Qconfig requests.
@@ -247,9 +250,13 @@ public class XrootdRedirectHandler extends ConcurrentXrootdRequestHandler {
      */
     private volatile Thread onOpenThread;
 
-    public XrootdRedirectHandler(XrootdDoor door, FsPath rootPath, ExecutorService executor,
-          Map<String, String> queryConfig,
-          Map<String, String> appIoQueues) {
+    public XrootdRedirectHandler(XrootdDoor door,
+				 FsPath rootPath,
+				 ExecutorService executor,
+				 Map<String, String> queryConfig,
+				 Map<String, String> appIoQueues,
+				 boolean expectProxy
+				 ) {
         super(executor);
         _door = door;
         _rootPath = rootPath;
@@ -257,6 +264,7 @@ public class XrootdRedirectHandler extends ConcurrentXrootdRequestHandler {
         _appIoQueues = appIoQueues;
         _defaultLoginSessionInfo = new LoginSessionInfo(Restrictions.denyAll());
         _logins = new ArrayDeque<>(2);
+	_expectProxy = expectProxy;
     }
 
     @Override
@@ -480,6 +488,8 @@ public class XrootdRedirectHandler extends ConcurrentXrootdRequestHandler {
             return withError(ctx, req, xrootdErrorCode(e.getRc()), "No such file");
         } catch (FileExistsCacheException e) {
             return withError(ctx, req, kXR_ItExists, "File already exists");
+        } catch (QuotaExceededCacheException e) {
+            return withError(ctx, req, kXR_overQuota, "Quota exceeded");
         } catch (TimeoutCacheException e) {
             return withError(ctx, req, xrootdErrorCode(e.getRc()), "Internal timeout");
         } catch (PermissionDeniedCacheException e) {
@@ -516,7 +526,8 @@ public class XrootdRedirectHandler extends ConcurrentXrootdRequestHandler {
          * Use the advertised endpoint, if possble, otherwise fall back to the
          * address to which the client connected.
          */
-        return _door.publicEndpoint().orElse(getDestinationAddress());
+        return _expectProxy ? getDestinationAddress() :
+	    _door.publicEndpoint().orElse(getDestinationAddress());
     }
 
     /**
@@ -1116,13 +1127,6 @@ public class XrootdRedirectHandler extends ConcurrentXrootdRequestHandler {
         } catch (CacheException e) {
             throw xrootdException(e);
         }
-    }
-
-    @Override
-    protected XrootdResponse<PrepareRequest> doOnPrepare(ChannelHandlerContext ctx,
-          PrepareRequest msg)
-          throws XrootdException {
-        return withOk(msg);
     }
 
     private void logDebugOnOpen(OpenRequest req) {

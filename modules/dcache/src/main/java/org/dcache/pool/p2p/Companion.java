@@ -259,13 +259,13 @@ class Companion {
      */
     public synchronized boolean cancel(Object cause) {
         _fsm.cancel(cause);
-        return (_fsm.getState() != CompanionContext.FSM.Done);
+        return (_fsm.getState().getId() != CompanionContext.FSM_Done_STATE_ID);
     }
 
     public String toString() {
         // Unsynchronized access to the fsm state means we may show an old value, but it
         // avoids blocking in toString().
-        return _id + " " + _pnfsId + " " + _fsm.getState();
+        return _id + " " + _pnfsId + " " + _fsm.getState() + " << " + _sourcePoolName;
     }
 
     /**

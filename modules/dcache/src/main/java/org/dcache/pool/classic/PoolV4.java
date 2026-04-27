@@ -40,7 +40,6 @@ import diskCacheV111.vehicles.PoolIoFileMessage;
 import diskCacheV111.vehicles.PoolManagerPoolUpMessage;
 import diskCacheV111.vehicles.PoolMgrReplicateFileMsg;
 import diskCacheV111.vehicles.PoolModifyModeMessage;
-import diskCacheV111.vehicles.PoolModifyPersistencyMessage;
 import diskCacheV111.vehicles.PoolMoverKillMessage;
 import diskCacheV111.vehicles.PoolRemoveFilesFromHSMMessage;
 import diskCacheV111.vehicles.PoolRemoveFilesMessage;
@@ -105,7 +104,6 @@ import org.dcache.pool.json.PoolDataDetails;
 import org.dcache.pool.json.PoolDataDetails.Lsf;
 import org.dcache.pool.json.PoolDataDetails.P2PMode;
 import org.dcache.pool.movers.Mover;
-import org.dcache.pool.movers.MoverFactory;
 import org.dcache.pool.nearline.HsmSet;
 import org.dcache.pool.nearline.NearlineStorageHandler;
 import org.dcache.pool.p2p.P2PClient;
@@ -211,18 +209,35 @@ public class PoolV4
 
     private Executor _executor;
 
-    private boolean _enableHsmFlag;
-
     private Consumer<RemoveFileInfoMessage> _kafkaSender = (s) -> {
     };
 
     private ThreadFactory _threadFactory;
 
+    // Hot file monitoring
+    private FileRequestMonitor _fileRequestMonitor;
+    private boolean _hotFileReplicationEnabled = true;
+
+    public void setFileRequestMonitor(FileRequestMonitor fileRequestMonitor) {
+        _fileRequestMonitor = fileRequestMonitor;
+    }
+
+    public FileRequestMonitor getFileRequestMonitor() {
+        return _fileRequestMonitor;
+    }
+
+    @Required
+    public void setHotFileReplicationEnabled(boolean hotFileReplicationEnabled) {
+        _hotFileReplicationEnabled = hotFileReplicationEnabled;
+    }
+
+    public boolean getHotFileReplicationEnabled() {
+        return _hotFileReplicationEnabled;
+    }
 
     protected void assertNotRunning(String error) {
         checkState(!_running, error);
     }
-
 
     @Autowired(required = false)
     @Qualifier("remove")
@@ -405,11 +420,6 @@ public class PoolV4
         _transferServices = transferServices;
     }
 
-    @Required
-    public void setEnableHsmFlag(boolean enable) {
-        _enableHsmFlag = enable;
-    }
-
     @Override
     public void setZone(Optional<String> zone) {
         zone.ifPresent(z -> _tags.put(ZONE_TAG, z));
@@ -429,9 +439,6 @@ public class PoolV4
         _repository.addFaultListener(this);
         _repository.addListener(new RepositoryLoader());
         _repository.addListener(new NotifyBillingOnRemoveListener());
-        if (_enableHsmFlag) {
-            _repository.addListener(new HFlagMaintainer());
-        }
         _repository.addListener(_replicationHandler);
 
         _ioQueue.addFaultListener(this);
@@ -536,24 +543,6 @@ public class PoolV4
     }
 
     /**
-     * Sets the h-flag in PNFS.
-     */
-    private class HFlagMaintainer extends AbstractStateChangeListener {
-
-        @Override
-        public void stateChanged(StateChangeEvent event) {
-            if (event.getOldState() == ReplicaState.FROM_CLIENT) {
-                PnfsId id = event.getPnfsId();
-                if (_hasTapeBackend) {
-                    _pnfs.putPnfsFlag(id, "h", "yes");
-                } else {
-                    _pnfs.putPnfsFlag(id, "h", "no");
-                }
-            }
-        }
-    }
-
-    /**
      * Interface between the repository and the StorageQueueContainer.
      */
     private class RepositoryLoader extends AbstractStateChangeListener {
@@ -611,7 +600,8 @@ public class PoolV4
                 try {
                     _kafkaSender.accept(msg);
                 } catch (KafkaException | org.apache.kafka.common.KafkaException e) {
-                    LOGGER.warn("Failed to send message to kafka: {} ", Throwables.getRootCause(e).getMessage());
+                    LOGGER.warn("Failed to send message to kafka: {} ",
+                          Throwables.getRootCause(e).getMessage());
                 }
             }
         }
@@ -672,6 +662,7 @@ public class PoolV4
         info.setPingHeartbeatInSecs(_pingThread.getHeartbeat());
         info.setP2pFileMode(_p2pFileMode == P2P_PRECIOUS ?
               P2PMode.PRECIOUS : P2PMode.CACHED);
+        info.setHotFileReplicationEnabled(_hotFileReplicationEnabled);
         info.setPoolMode(_poolMode.toString());
         if (_poolMode.isDisabled()) {
             info.setPoolStatusCode(_poolStatusCode);
@@ -704,7 +695,7 @@ public class PoolV4
         PnfsId pnfsId = attributes.getPnfsId();
         ProtocolInfo pi = message.getProtocolInfo();
 
-        MoverFactory moverFactory = _transferServices.getMoverFactory(pi);
+        TransferService<?> transferServices = _transferServices.getTransferService(pi);
         ReplicaDescriptor handle;
         try {
             if (message instanceof PoolAcceptFileMessage) {
@@ -717,7 +708,7 @@ public class PoolV4
                       ReplicaState.FROM_CLIENT,
                       targetState,
                       stickyRecords,
-                      moverFactory.getChannelCreateOptions(),
+                      transferServices.getChannelCreateOptions(),
                       maximumSize);
             } else {
                 Set<? extends OpenOption> openFlags =
@@ -733,7 +724,7 @@ public class PoolV4
             throw new FileInCacheException("File " + pnfsId + " already exists in " + _poolName, e);
         }
         try {
-            return moverFactory.createMover(handle, message, source);
+            return transferServices.createMover(handle, message, source);
         } catch (Throwable t) {
             handle.close();
             throw t;
@@ -762,6 +753,14 @@ public class PoolV4
     private void ioFile(CellMessage envelope, PoolIoFileMessage message) {
         try {
             message.setMoverId(queueIoRequest(envelope, message));
+            LOGGER.debug("moverId {} received request for pnfsId {}, hotfile replication is {}",
+                         message.getMoverId(), message.getPnfsId(), _hotFileReplicationEnabled
+                         ? "enabled" : "disabled");
+            if (_hotFileReplicationEnabled) {
+                _fileRequestMonitor.reportFileRequest(message.getPnfsId(),
+                      _ioQueue.numberOfRequestsFor(message.getPnfsId()),
+                      message.getProtocolInfo());
+            }
             message.setSucceeded();
         } catch (OutOfDateCacheException e) {
             if (_pingLimiter.tryAcquire()) {
@@ -1123,49 +1122,6 @@ public class PoolV4
             LOGGER.error("Replica {} not removed: {}", file, e.getMessage());
             return file;
         }
-    }
-
-    public PoolModifyPersistencyMessage messageArrived(CellMessage envelope,
-          PoolModifyPersistencyMessage msg) {
-        try {
-            PnfsId pnfsId = msg.getPnfsId();
-            switch (_repository.getState(pnfsId)) {
-                case PRECIOUS:
-                    if (msg.isCached()) {
-                        _repository.setState(pnfsId, ReplicaState.CACHED,
-                              "At request of " + envelope.getSourceAddress());
-                    }
-                    msg.setSucceeded();
-                    break;
-
-                case CACHED:
-                    if (msg.isPrecious()) {
-                        _repository.setState(pnfsId, ReplicaState.PRECIOUS,
-                              "At request of " + envelope.getSourceAddress());
-                    }
-                    msg.setSucceeded();
-                    break;
-
-                case FROM_CLIENT:
-                case FROM_POOL:
-                case FROM_STORE:
-                    msg.setFailed(101, "File still transient: " + pnfsId);
-                    break;
-
-                case BROKEN:
-                    msg.setFailed(101, "File is broken: " + pnfsId);
-                    break;
-
-                case NEW:
-                case REMOVED:
-                case DESTROYED:
-                    msg.setFailed(101, "File does not exist: " + pnfsId);
-                    break;
-            }
-        } catch (Exception e) { //FIXME
-            msg.setFailed(100, e);
-        }
-        return msg;
     }
 
     public PoolModifyModeMessage messageArrived(PoolModifyModeMessage msg) {

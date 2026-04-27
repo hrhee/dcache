@@ -61,11 +61,9 @@ package org.dcache.services.bulk.activity.plugin.pin;
 
 import static com.google.common.util.concurrent.Uninterruptibles.getUninterruptibly;
 import static diskCacheV111.util.CacheException.INVALID_ARGS;
+import static org.dcache.services.bulk.util.BulkRequestTarget.computeFsPath;
 import static org.dcache.services.bulk.util.BulkRequestTarget.State.SKIPPED;
 
-import com.google.common.util.concurrent.Futures;
-import com.google.common.util.concurrent.ListenableFuture;
-import diskCacheV111.util.AccessLatency;
 import diskCacheV111.util.CacheException;
 import diskCacheV111.util.FsPath;
 import diskCacheV111.util.NamespaceHandlerAware;
@@ -111,9 +109,6 @@ abstract class PinManagerActivity extends BulkActivity<Message> implements PinMa
             reply = getUninterruptibly(future);
             if (reply.getReturnCode() != 0) {
                 target.setErrorObject(reply.getErrorObject());
-            } else if (reply instanceof PinManagerPinMessage
-                  && ((PinManagerPinMessage) reply).getLifetime() == -1L) {
-                target.setState(SKIPPED);
             } else {
                 target.setState(State.COMPLETED);
             }
@@ -130,11 +125,12 @@ abstract class PinManagerActivity extends BulkActivity<Message> implements PinMa
         return pnfsHandler.getFileAttributes(path, MINIMALLY_REQUIRED_ATTRIBUTES);
     }
 
-    protected PinManagerUnpinMessage unpinMessage(String id, BulkRequestTarget target)
+    protected PinManagerUnpinMessage unpinMessage(String id, String prefix, BulkRequestTarget target)
           throws CacheException {
         PnfsId pnfsId = target.getPnfsId();
         if (pnfsId == null) {
-            pnfsId = getAttributes(target.getPath()).getPnfsId();
+            FsPath absolutePath = computeFsPath(prefix, target.getPath().toString());
+            pnfsId = getAttributes(absolutePath).getPnfsId();
         }
         return unpinMessage(id, pnfsId);
     }
@@ -146,23 +142,16 @@ abstract class PinManagerActivity extends BulkActivity<Message> implements PinMa
         return message;
     }
 
+    /**
+     * Only regular files get pinned
+     * @param attributes
+     * @throws CacheException
+     */
     protected void checkPinnable(FileAttributes attributes) throws CacheException {
         switch(attributes.getFileType()) {
             case SPECIAL:
             case DIR:
                 throw new CacheException(INVALID_ARGS, "Not a regular file.");
         }
-    }
-
-    protected Optional<ListenableFuture<Message>> skipIfOnline(FileAttributes attributes,
-          PinManagerPinMessage message) {
-        ListenableFuture<Message> future = null;
-        if (attributes.getAccessLatency() == AccessLatency.ONLINE) {
-            message.setReply();
-            message.setLifetime(-1L);
-            future = Futures.immediateFuture(message);
-        }
-
-        return Optional.ofNullable(future);
     }
 }

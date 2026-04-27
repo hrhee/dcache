@@ -1,6 +1,6 @@
 /* dCache - http://www.dcache.org/
  *
- * Copyright (C) 2015-2020 Deutsches Elektronen-Synchrotron
+ * Copyright (C) 2015-2025 Deutsches Elektronen-Synchrotron
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -19,6 +19,7 @@ package org.dcache.pool.classic;
 
 import com.google.common.base.Splitter;
 import diskCacheV111.util.CacheException;
+import diskCacheV111.vehicles.PoolIoFileMessage;
 import diskCacheV111.vehicles.ProtocolInfo;
 import diskCacheV111.vehicles.RemoteHttpDataTransferProtocolInfo;
 import diskCacheV111.vehicles.RemoteHttpsDataTransferProtocolInfo;
@@ -26,7 +27,8 @@ import eu.emi.security.authn.x509.OCSPParametes;
 import eu.emi.security.authn.x509.ProxySupport;
 import eu.emi.security.authn.x509.RevocationParameters;
 import eu.emi.security.authn.x509.X509Credential;
-import eu.emi.security.authn.x509.helpers.ssl.SSLTrustManager;
+import eu.emi.security.authn.x509.helpers.ssl.EnforcingNameMismatchCallback;
+import eu.emi.security.authn.x509.helpers.ssl.SSLTrustManagerWithHostnameChecking;
 import eu.emi.security.authn.x509.impl.OpensslCertChainValidator;
 import eu.emi.security.authn.x509.impl.ValidatorParams;
 import java.io.IOException;
@@ -45,6 +47,7 @@ import javax.annotation.Nullable;
 import javax.annotation.PostConstruct;
 import javax.net.ssl.KeyManager;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.X509ExtendedTrustManager;
 import javax.net.ssl.X509TrustManager;
 import org.apache.http.HttpRequest;
 import org.apache.http.HttpResponse;
@@ -56,8 +59,11 @@ import org.apache.http.impl.client.DefaultRedirectStrategy;
 import org.apache.http.impl.client.HttpClients;
 import org.apache.http.protocol.HttpContext;
 import org.apache.http.protocol.HttpRequestExecutor;
+import org.dcache.pool.movers.Mover;
 import org.dcache.pool.movers.MoverProtocol;
+import org.dcache.pool.movers.MoverProtocolMover;
 import org.dcache.pool.movers.RemoteHttpDataTransferProtocol;
+import org.dcache.pool.repository.ReplicaDescriptor;
 import org.dcache.security.trust.AggregateX509TrustManager;
 import org.dcache.util.Version;
 import org.slf4j.Logger;
@@ -66,6 +72,8 @@ import org.springframework.beans.factory.annotation.Value;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static dmg.util.Exceptions.meaningfulMessage;
+
+import dmg.cells.nucleus.CellPath;
 
 public class RemoteHttpTransferService extends SecureRemoteTransferService {
 
@@ -127,6 +135,15 @@ public class RemoteHttpTransferService extends SecureRemoteTransferService {
     private CloseableHttpClient sharedClient;
 
     @Override
+    public Mover<?> createMover(ReplicaDescriptor handle, PoolIoFileMessage message,
+          CellPath pathToDoor) throws CacheException {
+        Mover<?> mover = super.createMover(handle, message, pathToDoor);
+        MoverProtocolMover mpm = (MoverProtocolMover) mover;
+        ((RemoteHttpDataTransferProtocol) mpm.getMover()).setSubject(message.getSubject());
+        return mover;
+    }
+
+    @Override
     protected MoverProtocol createMoverProtocol(ProtocolInfo info) throws Exception {
         if (!(info instanceof RemoteHttpDataTransferProtocolInfo)) {
             throw new CacheException(CacheException.CANNOT_CREATE_MOVER,
@@ -143,7 +160,7 @@ public class RemoteHttpTransferService extends SecureRemoteTransferService {
                 SSLContext context = buildSSLContext(credential.getKeyManager());
                 CloseableHttpClient client = createClient(context);
 
-                return new RemoteHttpDataTransferProtocol(client) {
+                return new RemoteHttpDataTransferProtocol(client, getTransferLifeCycle()) {
                     @Override
                     protected void afterTransfer() {
                         super.afterTransfer();
@@ -157,7 +174,7 @@ public class RemoteHttpTransferService extends SecureRemoteTransferService {
             }
         }
 
-        return new RemoteHttpDataTransferProtocol(sharedClient);
+        return new RemoteHttpDataTransferProtocol(sharedClient, getTransferLifeCycle());
     }
 
     @PostConstruct
@@ -205,7 +222,7 @@ public class RemoteHttpTransferService extends SecureRemoteTransferService {
         return context;
     }
 
-    private X509TrustManager buildTrustManager(Path path) {
+    private X509ExtendedTrustManager buildTrustManager(Path path) {
         var ocspParameters = new OCSPParametes(getOcspCheckingMode());
         var revocationParams = new RevocationParameters(getCrlCheckingMode(), ocspParameters);
         var validatorParams = new ValidatorParams(revocationParams, ProxySupport.ALLOW);
@@ -214,7 +231,7 @@ public class RemoteHttpTransferService extends SecureRemoteTransferService {
         var validator = new OpensslCertChainValidator(path.toString(), true,
               getNamespaceMode(), updateInterval, validatorParams, false);
         onShutdownTasks.add(validator::dispose);
-        return new SSLTrustManager(validator);
+        return new SSLTrustManagerWithHostnameChecking(validator, new EnforcingNameMismatchCallback());
     }
 
     @Override

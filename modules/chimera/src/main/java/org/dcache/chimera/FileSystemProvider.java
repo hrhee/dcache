@@ -25,7 +25,6 @@ import java.util.Optional;
 import java.util.Set;
 import org.dcache.acl.ACE;
 import org.dcache.chimera.posix.Stat;
-import org.dcache.chimera.store.InodeStorageInformation;
 import org.dcache.util.Checksum;
 
 public interface FileSystemProvider extends Closeable {
@@ -173,6 +172,19 @@ public interface FileSystemProvider extends Closeable {
      */
     DirectoryStreamB<ChimeraDirectoryEntry> virtualDirectoryStream(FsInode dir, String labelname)
           throws ChimeraFsException;
+
+    /**
+     * Returns {@link DirectoryStreamB} of ChimeraDirectoryEntry in the directory.
+     * <p>
+     * The returned stream may keep system resources allocated. The try-with-resources construct
+     * should be used to ensure that the stream's close method is invoked after the stream
+     * operations are completed.
+     *
+     * @param dir inode of "collection" node
+     * @return stream of directory entries
+     */
+    DirectoryStreamB<ChimeraDirectoryEntry> listLabelsStream(FsInode dir)
+            throws ChimeraFsException;
 
     void remove(String path) throws ChimeraFsException;
 
@@ -367,6 +379,9 @@ public interface FileSystemProvider extends Closeable {
     Stat statTag(FsInode dir, String name)
           throws ChimeraFsException;
 
+    Stat statLabelsParent(FsInode dir)
+            throws ChimeraFsException;
+
     void setTagOwner(FsInode_TAG tagInode, String name, int owner) throws ChimeraFsException;
 
     void setTagOwnerGroup(FsInode_TAG tagInode, String name, int owner) throws ChimeraFsException;
@@ -396,12 +411,6 @@ public interface FileSystemProvider extends Closeable {
     List<OriginTag> findTags(String tagName) throws ChimeraFsException;
 
     int getFsId();
-
-    void setStorageInfo(FsInode inode,
-          InodeStorageInformation storageInfo) throws ChimeraFsException;
-
-    InodeStorageInformation getStorageInfo(FsInode inode)
-          throws ChimeraFsException;
 
     void setInodeChecksum(FsInode inode, int type,
           String checksum) throws ChimeraFsException;
@@ -518,6 +527,15 @@ public interface FileSystemProvider extends Closeable {
      * @throws ChimeraFsException
      */
     Set<String> getLabels(FsInode inode) throws ChimeraFsException;
+
+
+    /**
+     * Returns the Label name.
+     *
+     * @param ino of a file.
+     * @throws ChimeraFsException
+     */
+    String getLabelById(long ino) throws ChimeraFsException;
 
 
     /**

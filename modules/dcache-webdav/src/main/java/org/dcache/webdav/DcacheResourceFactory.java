@@ -4,6 +4,8 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.Iterables.cycle;
 import static com.google.common.collect.Iterables.limit;
+import static io.milton.http.quota.StorageChecker.StorageErrorReason.SER_DISK_FULL;
+import static io.milton.http.quota.StorageChecker.StorageErrorReason.SER_QUOTA_EXCEEDED;
 import static java.util.Arrays.asList;
 import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
@@ -50,6 +52,8 @@ import diskCacheV111.util.FsPath;
 import diskCacheV111.util.PermissionDeniedCacheException;
 import diskCacheV111.util.PnfsHandler;
 import diskCacheV111.util.PnfsId;
+import diskCacheV111.util.QuotaExceededCacheException;
+import diskCacheV111.util.RetentionPolicy;
 import diskCacheV111.util.TimeoutCacheException;
 import diskCacheV111.vehicles.DoorRequestInfoMessage;
 import diskCacheV111.vehicles.DoorTransferFinishedMessage;
@@ -148,6 +152,7 @@ import org.dcache.util.list.DirectoryEntry;
 import org.dcache.util.list.DirectoryListPrinter;
 import org.dcache.util.list.ListDirectoryHandler;
 import org.dcache.vehicles.FileAttributes;
+import org.dcache.vehicles.PnfsSetFileAttributes;
 import org.dcache.webdav.owncloud.OwncloudClients;
 import org.dcache.webdav.transfer.RemoteTransferHandler;
 import org.eclipse.jetty.io.EofException;
@@ -164,11 +169,28 @@ import org.stringtemplate.v4.ST;
  * This ResourceFactory exposes the dCache name space through the Milton WebDAV framework.
  */
 public class DcacheResourceFactory
-      extends AbstractCellComponent
-      implements ResourceFactory, CellMessageReceiver, CellCommandListener, CellInfoProvider {
+    extends AbstractCellComponent
+    implements ResourceFactory, CellMessageReceiver, CellCommandListener, CellInfoProvider {
 
     private static final Logger LOGGER =
-          LoggerFactory.getLogger(DcacheResourceFactory.class);
+        LoggerFactory.getLogger(DcacheResourceFactory.class);
+    private static final Logger SCITAGS_LOGGER =
+        LoggerFactory.getLogger("org.dcache.scitags");
+
+    static Optional<String> findHeaderIgnoreCase(HttpServletRequest request,
+          String expectedHeaderName) {
+        Enumeration<String> headerNames = request.getHeaderNames();
+        if (headerNames != null) {
+            while (headerNames.hasMoreElements()) {
+                String actualHeaderName = headerNames.nextElement();
+                if (actualHeaderName.equalsIgnoreCase(expectedHeaderName)) {
+                    return Optional.ofNullable(request.getHeader(actualHeaderName));
+                }
+            }
+        }
+
+        return Optional.ofNullable(request.getHeader(expectedHeaderName));
+    }
 
     private static final XMLOutputFactory XML_OUTPUT_FACTORY = XMLOutputFactory.newFactory();
 
@@ -734,10 +756,9 @@ public class DcacheResourceFactory
      */
     public DcacheResource createFile(FsPath path, InputStream inputStream, Long length)
           throws CacheException, InterruptedException, IOException,
-          URISyntaxException, BadRequestException {
+                 URISyntaxException, BadRequestException {
         Subject subject = getSubject();
         Restriction restriction = getRestriction();
-
         checkUploadSize(length);
 
         WriteTransfer transfer = new WriteTransfer(_pnfs, subject, restriction, path);
@@ -801,6 +822,11 @@ public class DcacheResourceFactory
                     transfer.deleteNameSpaceEntry();
                 }
             }
+        } catch (QuotaExceededCacheException e) {
+            throw new InsufficientStorageException(e.getMessage(),
+                                                   null,
+                                                   SER_QUOTA_EXCEEDED);
+
         } finally {
             _transfers.remove((int) transfer.getId());
         }
@@ -810,7 +836,7 @@ public class DcacheResourceFactory
 
     public String getWriteUrl(FsPath path, Long length)
           throws CacheException, InterruptedException,
-          URISyntaxException {
+                 URISyntaxException {
         Subject subject = getSubject();
         Restriction restriction = getRestriction();
 
@@ -852,6 +878,10 @@ public class DcacheResourceFactory
                     transfer.deleteNameSpaceEntry();
                 }
             }
+        } catch (QuotaExceededCacheException e) {
+            throw new InsufficientStorageException(e.getMessage(),
+                                                   null,
+                                                   SER_QUOTA_EXCEEDED);
         } finally {
             if (uri == null) {
                 _transfers.remove((int) transfer.getId());
@@ -1436,7 +1466,9 @@ public class DcacheResourceFactory
     private void checkUploadSize(Long length) {
         OptionalLong maxUploadSize = getMaxUploadSize();
         checkStorageSufficient(!maxUploadSize.isPresent() || length == null
-              || length <= maxUploadSize.getAsLong(), "Upload too large");
+                               || length <= maxUploadSize.getAsLong(),
+                               SER_DISK_FULL,
+                               "Upload too large");
     }
 
     private boolean isAdmin() {
@@ -1682,7 +1714,15 @@ public class DcacheResourceFactory
         /**
          * The original request path that will be passed to pool for fall-back redirect.
          */
-        private final String _requestPath;
+          private final String _requestPath;
+          private String _transferTag = "";
+
+          private static final String HEADER_SCITAG = "SciTag";
+          private static final String HEADER_TRANSFER_HEADER_SCITAG = "TransferHeaderSciTag";
+          private static final String[] SCITAG_HEADERS = {
+              HEADER_SCITAG,
+              HEADER_TRANSFER_HEADER_SCITAG
+          };
 
         public HttpTransfer(PnfsHandler pnfs, Subject subject,
               Restriction restriction, FsPath path) throws URISyntaxException {
@@ -1693,9 +1733,55 @@ public class DcacheResourceFactory
             var request = ServletRequest.getRequest();
             request.setAttribute(TRANSACTION_ATTRIBUTE, getTransaction());
             _requestPath = Requests.stripToPath(request.getRequestURL().toString());
+            _transferTag = readTransferTag(request);
+        }
+
+        private String readTransferTag(HttpServletRequest request) {
+            String door = getCellName() + '@' + getCellDomainName();
+
+            // SciTag takes precedence because it is checked first.
+            for (String header : SCITAG_HEADERS) {
+                var transferTag = findHeaderIgnoreCase(request, header)
+                      .map(String::trim)
+                      .filter(tag -> !tag.isEmpty());
+                if (transferTag.isPresent()) {
+                    logSciTagsRequest(request, door, header + "-header", transferTag.get());
+                    return transferTag.get();
+                }
+            }
+
+            var flowFromQuery = Optional.ofNullable(request.getParameter("scitag.flow"))
+                  .map(String::trim)
+                  .filter(tag -> !tag.isEmpty());
+            if (flowFromQuery.isPresent()) {
+                logSciTagsRequest(request, door, "scitag.flow-query", flowFromQuery.get());
+                return flowFromQuery.get();
+            }
+
+            logSciTagsRequest(request, door, "none", "");
+            return "";
+        }
+
+        private static void logSciTagsRequest(HttpServletRequest request, String door,
+              String tagSource, String transferTag) {
+            if (SCITAGS_LOGGER.isDebugEnabled()) {
+                SCITAGS_LOGGER.debug(
+                      "scitags event=request protocol={} door={} remote={} method={} alias={} local={} tagSource={} transferTag={}",
+                      request.isSecure() ? PROTOCOL_INFO_SSL_NAME : PROTOCOL_INFO_NAME,
+                      door,
+                      request.getRemoteAddr(),
+                      request.getMethod(),
+                      request.getServerName(),
+                      request.getLocalAddr(),
+                      tagSource,
+                      transferTag.isEmpty() ? "-" : transferTag);
+            }
         }
 
         protected ProtocolInfo createProtocolInfo(InetSocketAddress address) {
+            List<ChecksumType> wantedChecksums = _wantedChecksum == null
+                    ? Collections.emptyList()
+                    : List.of(_wantedChecksum);
             HttpProtocolInfo protocolInfo =
                   new HttpProtocolInfo(
                         _isSSL ? PROTOCOL_INFO_SSL_NAME : PROTOCOL_INFO_NAME,
@@ -1706,8 +1792,13 @@ public class DcacheResourceFactory
                         _requestPath,
                         _location,
                         _disposition,
-                        _wantedChecksum);
+                        wantedChecksums);
             protocolInfo.setSessionId((int) getId());
+            protocolInfo.setTransferTag(_transferTag);
+            if (LOGGER.isDebugEnabled()) {
+                LOGGER.debug("ProtocolInfo created with transferTag='{}' for path={}",
+                      _transferTag, _requestPath);
+            }
             return protocolInfo;
         }
 
@@ -1779,8 +1870,19 @@ public class DcacheResourceFactory
                 try {
                     connection.setRequestProperty("Connection", "Close");
                     if (range != null) {
-                        connection.addRequestProperty("Range",
-                              String.format("bytes=%d-%d", range.getStart(), range.getFinish()));
+                        String rangeHeader;
+                        Long start = range.getStart();
+                        Long finish = range.getFinish();
+
+                        if (start == null && finish != null) {
+                            rangeHeader = String.format("bytes=-%d", finish);
+                        } else if (start != null && finish == null) {
+                            rangeHeader = String.format("bytes=%d-", start);
+                        } else {
+                            rangeHeader = String.format("bytes=%d-%d", start, finish);
+                        }
+
+                        connection.addRequestProperty("Range", rangeHeader);
                     }
 
                     connection.connect();
@@ -1826,16 +1928,14 @@ public class DcacheResourceFactory
      */
     private class WriteTransfer extends HttpTransfer {
 
-        private final Optional<Instant> _mtime;
         private final Optional<Checksum> _contentMd5;
+        /** optional hits to tape system how to store the file */
+        private final Optional<String> _archiveMetadata;
 
         public WriteTransfer(PnfsHandler pnfs, Subject subject,
               Restriction restriction, FsPath path) throws URISyntaxException {
             super(pnfs, subject, restriction, path);
 
-            HttpServletRequest request = ServletRequest.getRequest();
-
-            _mtime = OwncloudClients.parseMTime(request);
 
             wantDigest()
                   .flatMap(Checksums::parseWantDigest)
@@ -1849,12 +1949,13 @@ public class DcacheResourceFactory
                 throw new UncheckedBadRequestException("Bad Content-MD5 header: " + e.toString(),
                       null);
             }
+
+            _archiveMetadata = Optional.ofNullable(ServletRequest.getRequest().getHeader("ArchiveMetadata"));
         }
 
         @Override
         protected FileAttributes fileAttributesForNameSpace() {
             FileAttributes attributes = super.fileAttributesForNameSpace();
-            _mtime.map(Instant::toEpochMilli).ifPresent(attributes::setModificationTime);
 
             /**
              * Add user provided extended attributes, which will be sent to the pool.
@@ -1889,15 +1990,26 @@ public class DcacheResourceFactory
         public void createNameSpaceEntry() throws CacheException {
             super.createNameSpaceEntry();
 
-            if (_mtime.isPresent()) {
-                OwncloudClients.addMTimeAccepted(ServletResponse.getResponse());
-            }
+            // Update mtime (sent to pool) to match any client-supplied value.
+            HttpServletRequest request = ServletRequest.getRequest();
+            OwncloudClients.parseMTime(request)
+                    .map(Instant::toEpochMilli)
+                    .ifPresent(m -> {
+                        getFileAttributes().setModificationTime(m);
+                        var response = ServletResponse.getResponse();
+                        OwncloudClients.addMTimeAccepted(response);
+                    });
 
             if (_contentMd5.isPresent()) {
                 setChecksum(_contentMd5.get());
             }
 
             getMaxUploadSize().ifPresent(this::setMaximumLength);
+
+            // for CUSTODIAL files on upload client might provide extra information that should be passed to the tape system
+            if (_archiveMetadata.isPresent() && getFileAttributes().getRetentionPolicy() == RetentionPolicy.CUSTODIAL) {
+                getFileAttributes().getStorageInfo().setKey("archive_metadata", _archiveMetadata.get());
+            }
         }
 
         public void relayData(InputStream inputStream)
@@ -1942,7 +2054,8 @@ public class DcacheResourceFactory
                             throw new BadRequestException(connection.getResponseMessage());
                         case 507: // Insufficient Storage
                             throw new InsufficientStorageException(connection.getResponseMessage(),
-                                  null);
+                                                                   null,
+                                                                   SER_DISK_FULL);
                         case ResponseStatus.SC_INTERNAL_SERVER_ERROR:
                             throw new CacheException(
                                   "Pool error: " + connection.getResponseMessage());

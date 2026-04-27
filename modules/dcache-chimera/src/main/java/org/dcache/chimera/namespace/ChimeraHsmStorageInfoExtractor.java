@@ -18,7 +18,6 @@ import org.dcache.chimera.FileNotFoundChimeraFsException;
 import org.dcache.chimera.FsInode;
 import org.dcache.chimera.StorageGenericLocation;
 import org.dcache.chimera.posix.Stat.StatAttributes;
-import org.dcache.chimera.store.InodeStorageInformation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -84,10 +83,6 @@ public abstract class ChimeraHsmStorageInfoExtractor implements
                 }
             }
 
-            Optional<String> spaceToken = getFirstLine(dirInode.getTag("WriteToken"));
-            if (spaceToken.isPresent()) {
-                return null;
-            }
             return getDefaultAccessLatency();
         } catch (FileNotFoundChimeraFsException e) {
             throw new FileNotFoundCacheException(e.getMessage(), e);
@@ -124,11 +119,6 @@ public abstract class ChimeraHsmStorageInfoExtractor implements
                     LOGGER.error("Badly formatted RetentionPolicy tag in {}: {}", dirInode,
                           e.getMessage());
                 }
-            }
-
-            Optional<String> spaceToken = getFirstLine(dirInode.getTag("WriteToken"));
-            if (spaceToken.isPresent()) {
-                return null;
             }
 
             return getDefaultRetentionPolicy();
@@ -292,14 +282,6 @@ public abstract class ChimeraHsmStorageInfoExtractor implements
                 checkFlushUpdate(dCacheStorageInfo);
 
                 List<URI> locationURIs = dCacheStorageInfo.locations();
-
-                if (!locationURIs.isEmpty()) {
-                    InodeStorageInformation storageInfo = new InodeStorageInformation(inode,
-                          dCacheStorageInfo.getHsm(),
-                          dCacheStorageInfo.getKey("store"),
-                          dCacheStorageInfo.getKey("group"));
-                    inode.getFs().setStorageInfo(inode, storageInfo);
-                }
 
                 for (URI location : locationURIs) {
                     // skip bad URI's if the get here

@@ -13,10 +13,12 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import com.google.common.collect.ImmutableSet;
+import com.google.common.net.InetAddresses;
 import com.sun.security.auth.UnixNumericGroupPrincipal;
 import com.sun.security.auth.UnixNumericUserPrincipal;
 import java.security.Principal;
 import java.util.HashSet;
+import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Set;
 import javax.security.auth.Subject;
@@ -345,5 +347,62 @@ public class SubjectsTest {
 
         assertThat(principals.size(), is(equalTo(1)));
         assertThat(principals, contains(new GroupNamePrincipal("my-group", false)));
+    }
+
+    @Test
+    public void shouldBuildSubjectWithToken() {
+        var args = asList("token:FOO");
+
+        var subject = Subjects.subjectFromArgs(args);
+
+        assertThat(subject.getPublicCredentials(), is(empty()));
+        assertThat(subject.getPrivateCredentials(), contains(new BearerTokenCredential("FOO")));
+        assertThat(subject.getPrincipals(), is(empty()));
+    }
+
+    @Test
+    public void shouldBuildSubjectWithPrincipal() {
+        var args = asList("oidc:SOME-OIDC-VALUE@MY-OP");
+
+        var subject = Subjects.subjectFromArgs(args);
+
+        assertThat(subject.getPublicCredentials(), is(empty()));
+        assertThat(subject.getPrivateCredentials(), is(empty()));
+        assertThat(subject.getPrincipals(), contains(new OidcSubjectPrincipal("SOME-OIDC-VALUE","MY-OP")));
+    }
+
+    @Test
+    public void shouldBuildSubjectWithTokenAndPrincipal() {
+        var args = asList("token:FOO", "origin:192.0.2.42");
+
+        var subject = Subjects.subjectFromArgs(args);
+
+        assertThat(subject.getPublicCredentials(), is(empty()));
+        assertThat(subject.getPrivateCredentials(), contains(new BearerTokenCredential("FOO")));
+        assertThat(subject.getPrincipals(), contains(new Origin(InetAddresses.forString("192.0.2.42"))));
+    }
+
+    @Test
+    public void principalFullString() {
+        String s1 = Subjects.toString(_subject1);
+        assertTrue("Full string must contain UID substring",
+                s1.contains("uid:" + UID1));
+        assertTrue("Full string must contain Username Substring",
+                s1.contains("user:" + USERNAME1));
+        assertTrue("Full string must have correct amount of commas",
+                s1.chars().filter(c -> c == ',').count() == _subject1.getPrincipals().size() - 1);
+        assertTrue("Full string must begin and end with curly braces",
+                (s1.charAt(0) == '{') && (s1.charAt(s1.length() - 1) == '}'));
+    }
+
+    @Test
+    public void principalStringList() {
+        List<String> stringList1 = Subjects.toStringList(_subject1);
+        assertTrue("Subject must have string-formatted UidPrincipal",
+                stringList1.contains("uid:" + UID1));
+        assertTrue("Subject must have string-formatted UserNamePrincipal",
+                stringList1.contains("user:" + USERNAME1));
+        assertEquals("Length of list is as expected",
+                stringList1.size(), _subject1.getPrincipals().size());
     }
 }

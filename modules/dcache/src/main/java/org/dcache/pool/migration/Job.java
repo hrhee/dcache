@@ -1,13 +1,5 @@
 package org.dcache.pool.migration;
 
-import static com.google.common.base.Preconditions.checkState;
-
-import diskCacheV111.util.CacheException;
-import diskCacheV111.util.FileNotInCacheException;
-import diskCacheV111.util.PnfsId;
-import diskCacheV111.vehicles.PoolManagerPoolInformation;
-import dmg.cells.nucleus.CellMessage;
-import dmg.cells.nucleus.DelayedReply;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -25,7 +17,9 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
+
 import javax.annotation.concurrent.GuardedBy;
+
 import org.dcache.pool.repository.AbstractStateChangeListener;
 import org.dcache.pool.repository.CacheEntry;
 import org.dcache.pool.repository.EntryChangeEvent;
@@ -39,6 +33,15 @@ import org.dcache.util.FireAndForgetTask;
 import org.dcache.util.expression.Expression;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import static com.google.common.base.Preconditions.checkState;
+
+import diskCacheV111.util.CacheException;
+import diskCacheV111.util.FileNotInCacheException;
+import diskCacheV111.util.PnfsId;
+import diskCacheV111.vehicles.PoolManagerPoolInformation;
+import dmg.cells.nucleus.CellMessage;
+import dmg.cells.nucleus.DelayedReply;
 
 /**
  * Encapsulates a job as defined by a user command.
@@ -59,14 +62,29 @@ import org.slf4j.LoggerFactory;
  * restored on pool start.
  * <p>
  * Jobs can be in any of the following states:
- * <p>
- * NEW            Job has not been started yet INITIALIZING   Initial scan of repository RUNNING
- *    Job runs (schedules new tasks) SLEEPING       A task failed; no tasks are scheduled for 10
- * seconds PAUSED         Pause expression evaluates to true; no tasks are scheduled for 10 seconds
- * STOPPING       Stop expression evaluate to true; waiting or tasks to stop SUSPENDED      Job
- * suspended by user; no tasks are scheduled CANCELLING     Job cancelled by user; waiting for tasks
- * to stop CANCELLED      Job cancelled by user; no tasks are running FINISHED       Job completed
- * FAILED         Job failed
+ * <dl>
+ *   <dt>NEW</dt>
+ *   <dd>Job has not been started yet</dd>
+ *   <dt>INITIALIZING</dt>   Initial scan of repository
+ *   <dt>RUNNING</dt>
+ *   <dd>Job runs (schedules new tasks)</dd>
+ *   <dt>SLEEPING</dt>
+ *   <dd>A task failed; no tasks are scheduled for 10 seconds</dd>
+ *   <dt>PAUSED</dt>
+ *   <dd>Pause expression evaluates to true; no tasks are scheduled for 10 seconds</dd>
+ *   <dt>STOPPING</dt>
+ *   <dd>Stop expression evaluate to true; waiting or tasks to stop</dd>
+ *   <dt>SUSPENDED</dt>
+ *   <dd>Job suspended by user; no tasks are scheduled</dd>
+ *   <dt>CANCELLING</dt>
+ *   <dd>Job cancelled by user; waiting for tasks to stop</dd>
+ *   <dt>CANCELLED</dt>
+ *   <dd>Job cancelled by user; no tasks are running</dd>
+ *   <dt>FINISHED</dt>
+ *   <dd>Job completed</dd>
+ *   <dt>FAILED</dt>
+ *   <dd>Job failed</dd>
+ * </dl>
  */
 public class Job
       extends AbstractStateChangeListener implements TaskCompletionHandler {
@@ -81,7 +99,7 @@ public class Job
     private final Set<PnfsId> _queued = new LinkedHashSet<>();
     private final Map<PnfsId, Long> _sizes = new HashMap<>();
     private final Map<PnfsId, Task> _running = new HashMap<>();
-    private final BlockingQueue<Error> _errors = new ArrayBlockingQueue<>(15);
+    private final BlockingQueue<Note> _notes = new ArrayBlockingQueue<>(15);
     private final Map<PoolMigrationJobCancelMessage, DelayedReply> _cancelRequests =
           new HashMap<>();
 
@@ -90,6 +108,7 @@ public class Job
     private final JobDefinition _definition;
     private final TaskParameters _taskParameters;
     private final String _pinPrefix;
+    private final long _creationTime;
 
     private final Lock _lock = new ReentrantLock(true);
 
@@ -103,13 +122,14 @@ public class Job
         _definition = definition;
         _concurrency = 1;
         _state = State.NEW;
+        _creationTime = System.currentTimeMillis();
 
         _taskParameters = new TaskParameters(context.getPoolStub(), context.getPnfsStub(),
               context.getPinManagerStub(),
               context.getExecutor(), definition.selectionStrategy,
               definition.poolList, definition.isEager, definition.isMetaOnly,
               definition.computeChecksumOnUpdate, definition.forceSourceMode,
-              definition.maintainAtime, definition.replicas);
+              definition.maintainAtime, definition.replicas, definition.waitForTargets);
 
         _pinPrefix = context.getPinManagerStub().getDestinationPath().getDestinationAddress()
               .getCellName();
@@ -170,6 +190,10 @@ public class Job
         return _definition;
     }
 
+    public long getCreationTime() {
+        return _creationTime;
+    }
+
     public int getConcurrency() {
         _lock.lock();
         try {
@@ -189,11 +213,11 @@ public class Job
         }
     }
 
-    public void addError(Error error) {
+    public void addNote(Note note) {
         _lock.lock();
         try {
-            while (!_errors.offer(error)) {
-                _errors.poll();
+            while (!_notes.offer(note)) {
+                _notes.poll();
             }
         } finally {
             _lock.unlock();
@@ -255,10 +279,10 @@ public class Job
                 task.getInfo(pw);
             }
 
-            if (!_errors.isEmpty()) {
-                pw.println("Most recent errors:");
-                for (Error error : _errors) {
-                    pw.println(error);
+            if (!_notes.isEmpty()) {
+                pw.println("Most recent notes:");
+                for (Note note : _notes) {
+                    pw.println(note);
                 }
             }
         } finally {
@@ -498,11 +522,25 @@ public class Job
             setState(State.FINISHED);
         } else if (_state == State.RUNNING &&
               (!_definition.sourceList.isValid() ||
-                    !_definition.poolList.isValid())) {
-            setState(State.SLEEPING);
+                    !_definition.poolList.isValid() ||
+                    (_definition.waitForTargets && _definition.poolList.getPools().isEmpty()))) {
+            String error = _definition.sourceList.getBrokenMessage();
+            if (error == null) {
+                error = _definition.poolList.getBrokenMessage();
+            }
+            if (error != null) {
+                addNote(new Note(0, null, error));
+                setState(State.FAILED);
+            } else {
+                setState(State.SLEEPING);
+            }
         } else if (_state == State.RUNNING) {
             Iterator<PnfsId> i = _queued.iterator();
             while ((_running.size() < _concurrency) && i.hasNext()) {
+                if (_state != State.RUNNING) {
+                    break;
+                }
+
                 Expression stopWhen = _definition.stopWhen;
                 if (stopWhen != null && evaluateLifetimePredicate(stopWhen)) {
                     stop();
@@ -515,8 +553,9 @@ public class Job
                 }
 
                 PnfsId pnfsId = i.next();
-                if (!_context.lock(pnfsId)) {
-                    addError(new Error(0, pnfsId, "File is locked"));
+                boolean locked = _context.lock(pnfsId);
+                if (!locked) {
+                    addNote(new Note(0, pnfsId, "File is locked"));
                     continue;
                 }
 
@@ -735,14 +774,8 @@ public class Job
                 _queued.add(pnfsId);
                 _context.unlock(pnfsId);
             }
-
-            if (_state == State.RUNNING) {
-                setState(State.SLEEPING);
-            } else {
-                schedule();
-            }
-
-            addError(new Error(task.getId(), pnfsId, msg));
+            schedule();
+            addNote(new Note(task.getId(), pnfsId, msg));
         } finally {
             _lock.unlock();
         }
@@ -761,7 +794,7 @@ public class Job
             _context.unlock(pnfsId);
             schedule();
 
-            addError(new Error(task.getId(), pnfsId, msg));
+            addNote(new Note(task.getId(), pnfsId, msg));
         } finally {
             _lock.unlock();
         }
@@ -780,6 +813,18 @@ public class Job
             _context.unlock(pnfsId);
             _statistics.addCompleted(_sizes.remove(pnfsId));
             schedule();
+        } finally {
+            _lock.unlock();
+        }
+    }
+
+    @Override
+    public void taskCompletedWithNote(Task task, String msg) {
+        _lock.lock();
+        try {
+            taskCompleted(task);
+
+            addNote(new Note(task.getId(), task.getPnfsId(), msg));
         } finally {
             _lock.unlock();
         }
@@ -939,23 +984,23 @@ public class Job
         return expression.evaluateBoolean(symbols);
     }
 
-    protected static class Error {
+    protected static class Note {
 
         private final long _id;
         private final long _time;
         private final PnfsId _pnfsId;
-        private final String _error;
+        private final String _note;
 
-        public Error(long id, PnfsId pnfsId, String error) {
+        public Note(long id, PnfsId pnfsId, String note) {
             _id = id;
             _time = System.currentTimeMillis();
             _pnfsId = pnfsId;
-            _error = error;
+            _note = note;
         }
 
         public String toString() {
             return String.format("%tT [%d] %s: %s",
-                  _time, _id, _pnfsId, _error);
+                  _time, _id, (_pnfsId == null) ? "-" : _pnfsId, _note);
         }
     }
 }

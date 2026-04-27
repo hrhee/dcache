@@ -82,6 +82,39 @@ The individual dCache instances can then be pointed to the corresponding root ZN
         cluster-box1:2181,cluster-box2:2182,cluster-box3:2181/instance1
 
 
+### Encrypted connections to ZooKeeper
+
+dCache supports TLS-encrypted connections between the Curator client and ZooKeeper using TLSv1.3. Both the ZooKeeper server and the dCache client require a JKS(.jks) or PKCS12(.p12) keystore and truststore.
+TLS is not supported using the embedded ZooKeeperCell (started by including [dCacheDomain/zookeeper] in the layout file). Please use an external ZooKeeper service for using TLS encryption.
+
+Refer to the [ZooKeeper TLS documentation](https://zookeeper.apache.org/doc/current/zookeeperAdmin.html#Quorum+TLS) for configuring the server side. The relevant `zoo.cfg` properties are:
+
+```ini
+secureClientPort=2281
+ssl.keyStore.location=/path/to/zookeeper-keystore
+ssl.keyStore.password=<password>
+ssl.trustStore.location=/path/to/zookeeper-truststore
+ssl.trustStore.password=<password>
+```
+
+On the dCache side, enable TLS and provide the Curator client keystore and truststore in `dcache.conf` or the layout file:
+
+```ini
+dcache.zookeeper.tls.enabled = true
+dcache.zookeeper.tls.keystore.path = /path/to/curator-keystore
+dcache.zookeeper.tls.keystore.password = <password>
+dcache.zookeeper.tls.truststore.path = /path/to/curator-truststore
+dcache.zookeeper.tls.truststore.password = <password>
+```
+
+Also update `dcache.zookeeper.connection` in your layout file to point to the ZooKeeper TLS port:
+
+```ini
+dcache.zookeeper.connection = <zookeeper-host>:<tls-port>
+```
+
+If any of the keystore or truststore properties are not configured, dCache will fail to connect to ZooKeeper.
+
 ## Inspecting ZooKeeper through dCache
 
 Every `System` cell offers two new commands, `zk ls` and `zk get` to list and read the data stored in ZooKeeper. Since all domains use the same ZooKeeper instance, the behavior of these commands is the same in all domains. ZooKeeper data is organized hierarchically. An element is called a _znode_ and may have children as well as a value. The namespace is organized like a POSIX file system, with slash as a name separator. E.g. `zk ls /` lists the children under the root znode.

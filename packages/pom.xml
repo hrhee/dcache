@@ -4,7 +4,7 @@
   <parent>
     <groupId>org.dcache</groupId>
     <artifactId>dcache-parent</artifactId>
-    <version>10.1.0-SNAPSHOT</version>
+    <version>12.0.0-SNAPSHOT</version>
   </parent>
 
   <artifactId>packaging</artifactId>
@@ -70,11 +70,6 @@
     </dependency>
     <dependency>
         <groupId>org.dcache</groupId>
-        <artifactId>dcache-srm</artifactId>
-        <version>${project.version}</version>
-    </dependency>
-    <dependency>
-        <groupId>org.dcache</groupId>
         <artifactId>dcache-spacemanager</artifactId>
         <version>${project.version}</version>
     </dependency>
@@ -107,7 +102,7 @@
     </dependency>
     <dependency>
         <groupId>org.dcache</groupId>
-        <artifactId>gplazma2-argus</artifactId>
+        <artifactId>gplazma2-alise</artifactId>
         <version>${project.version}</version>
     </dependency>
     <dependency>
@@ -197,6 +192,11 @@
     </dependency>
       <dependency>
           <groupId>org.dcache</groupId>
+          <artifactId>gplazma2-pyscript</artifactId>
+          <version>${project.version}</version>
+      </dependency>
+      <dependency>
+          <groupId>org.dcache</groupId>
           <artifactId>dcache-frontend</artifactId>
           <version>${project.version}</version>
       </dependency>
@@ -215,11 +215,6 @@
       <artifactId>dcache-view-admin</artifactId>
     </dependency>
 
-    <dependency>
-        <groupId>saxon</groupId>
-        <artifactId>saxon</artifactId>
-        <scope>runtime</scope>
-    </dependency>
   </dependencies>
 
   <modules>

@@ -145,8 +145,7 @@ public class FileOperationHandler implements CellMessageSender {
           + "the namespace replica locations and the actual locations on disk.";
 
     private static final ImmutableList<StickyRecord> ONLINE_STICKY_RECORD
-          = ImmutableList.of(new StickyRecord("system",
-          StickyRecord.NON_EXPIRING));
+          = ImmutableList.of(new StickyRecord(StickyRecord.NON_EXPIRING));
 
     private static final RateLimiter LIMITER = RateLimiter.create(0.001);
 
@@ -380,7 +379,8 @@ public class FileOperationHandler implements CellMessageSender {
               false,  // compute checksum on update; should not happen
               false,  // force copy even if pool not readable
               true,   // maintain atime
-              1);
+              1,       // only one copy per task
+              true);   // wait for new targets if necessary
 
         Task task = new Task(taskParameters, completionHandler, source, pnfsId,
               ReplicaState.CACHED, ONLINE_STICKY_RECORD,

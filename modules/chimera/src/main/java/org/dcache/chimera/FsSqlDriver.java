@@ -41,6 +41,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.sql.Types;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -65,7 +66,6 @@ import org.dcache.chimera.FileSystemProvider.StatCacheOption;
 import org.dcache.chimera.posix.Stat;
 import org.dcache.chimera.posix.Stat.StatAttributes;
 import org.dcache.chimera.spi.DBDriverProvider;
-import org.dcache.chimera.store.InodeStorageInformation;
 import org.dcache.util.Checksum;
 import org.dcache.util.ChecksumType;
 import org.slf4j.Logger;
@@ -85,8 +85,7 @@ import org.springframework.jdbc.support.SQLErrorCodeSQLExceptionTranslator;
 /**
  * SQL driver
  */
-public class FsSqlDriver {
-
+public class FsSqlDriver implements AutoCloseable {
     /**
      * Simple class to hold a tag assignment's directory inumber and its value.
      */
@@ -375,6 +374,13 @@ public class FsSqlDriver {
     }
 
     public Stat stat(String id) {
+        if (id.startsWith("FFFF")) {
+            int labelId = Integer.parseInt((id.substring(20, id.length())), 16);
+            return _jdbc.query(
+                  "SELECT * FROM t_labels_ref where label_id=?",
+                  ps -> ps.setString(1, String.valueOf(labelId)),
+                  rs -> rs.next() ? toStatForLabel(rs) : null);
+        }
         return _jdbc.query(
               "SELECT * FROM t_inodes WHERE ipnfsid=?",
               ps -> ps.setString(1, id),
@@ -386,6 +392,12 @@ public class FsSqlDriver {
     }
 
     public Stat stat(FsInode inode, int level) {
+        if (inode.type() == FsInodeType.LABEL) {
+            return _jdbc.query(
+                  "SELECT * FROM t_labels_ref where label_id=?",
+                  ps -> ps.setLong(1, inode.ino()),
+                  rs -> rs.next() ? toStatForLabel(rs) : null);
+        }
         if (level == 0) {
             return _jdbc.query(
                   "SELECT * FROM t_inodes WHERE inumber=?",
@@ -396,6 +408,53 @@ public class FsSqlDriver {
                   "SELECT * FROM t_level_" + level + " WHERE inumber=?",
                   ps -> ps.setLong(1, inode.ino()),
                   rs -> rs.next() ? toStatLevel(rs) : null);
+        }
+    }
+
+    private Stat toStatForLabel(ResultSet rs) throws SQLException {
+        Timestamp now = new Timestamp(System.currentTimeMillis());
+        Stat stat = new Stat();
+        String pnfsIdSecond = "FFFF0000000000000000";
+        String tempId = String.format("%016x", rs.getLong("label_id"));
+        String pnfsID = pnfsIdSecond + tempId;
+        stat.setIno(rs.getLong("label_id"));
+        // TODO could be changed latter or should be deleted
+        stat.setId(pnfsID);
+        stat.setCrTime(now.getTime());
+        stat.setGeneration(LocalDateTime.now().getMinute());
+        stat.setSize(512);
+        stat.setATime(now.getTime());
+        stat.setCTime(now.getTime());
+        stat.setMTime(now.getTime());
+        stat.setUid(0000);
+        stat.setGid(0000);
+        stat.setMode(0755 | UnixPermission.S_IFDIR);
+        stat.setDev(19);
+        //TODO this is the case when the label_id is 0, we have conflict in nfs, this not teh correct solution
+        if (stat.getIno()==0L){
+            stat.setIno(stat.getDev()+stat.getIno());
+        }
+        stat.setRdev(23);
+        stat.setNlink(13);
+        return stat;
+    }
+
+
+    /**
+     * Returns the Label name.
+     *
+     * @param labelId of a label.
+     * @throws ChimeraFsException
+     */
+    String getLabelById(Long labelId) throws ChimeraFsException {
+        try {
+            return _jdbc.queryForObject("SELECT labelname FROM t_labels where  label_id=?",
+                  (rs, rn) -> {
+                      return (rs.getString("labelname"));
+                  }, labelId);
+
+        } catch (EmptyResultDataAccessException e) {
+            throw new NoLabelChimeraException("wrong id");
         }
     }
 
@@ -543,13 +602,28 @@ public class FsSqlDriver {
                           rs -> rs.next() ? new FsInode(parent.getFs(), rs.getLong("inumber"),
                                 FsInodeType.INODE, 0, toStat(rs)) : null);
                 } else {
-                    return _jdbc.query("SELECT ichild FROM t_dirs WHERE iparent=? AND iname=?",
-                          ps -> {
-                              ps.setLong(1, parent.ino());
-                              ps.setString(2, name);
-                          },
-                          rs -> rs.next() ? new FsInode(parent.getFs(), rs.getLong("ichild"))
-                                : null);
+
+                    Long parentIno;
+                    String nameChild;
+                    int  prefixParent = name.lastIndexOf("-");
+                    if (parent.type() == FsInodeType.LABEL) {
+
+                        parentIno = Long.valueOf(
+                              name.substring( prefixParent + 1, name.length()));
+                        nameChild = name.substring(0, prefixParent);
+                    }else {
+                        parentIno = parent.ino();
+                        nameChild = name;
+
+                    }
+                        return _jdbc.query("SELECT ichild FROM t_dirs WHERE iparent=? AND iname=?",
+                              ps -> {
+                                  ps.setLong(1, parentIno);
+                                  ps.setString(2, nameChild);
+                              },
+                              rs -> rs.next() ? new FsInode(parent.getFs(), rs.getLong("ichild"))
+                                    : null);
+
                 }
         }
     }
@@ -1433,7 +1507,8 @@ public class FsSqlDriver {
                           /* some databases (hsqldb in particular) fill a full record for
                            * BLOBs and on read reads a full record, which is not what we expect.
                            */
-                          return in.readNBytes(data, offset,
+                          // If tag is not set or NULL, then getBinaryStream will return null.
+                          return in == null ? 0 : in.readNBytes(data, offset,
                                 Math.min(len, (int) rs.getLong("isize")));
                       } catch (IOException e) {
                           throw new LobRetrievalFailureException(e.getMessage(), e);
@@ -1479,6 +1554,33 @@ public class FsSqlDriver {
         } catch (IncorrectResultSizeDataAccessException e) {
             throw FileNotFoundChimeraFsException.ofTag(dir, name);
         }
+    }
+
+    /**
+     * set stat for virtual dirs parent .(collection)
+     *
+     */
+    public Stat statLabelsParent() throws ChimeraFsException {
+        Timestamp now = new Timestamp(System.currentTimeMillis());
+        Stat stat = new Stat();
+        String pnfsIdSecond = "FFFFF000000000000000";
+        String tempId = String.format("%016x", 0);
+        String pnfsID = pnfsIdSecond + tempId;
+        stat.setIno(0);
+        stat.setId(pnfsID);
+        stat.setCrTime(now.getTime());
+        stat.setGeneration(LocalDateTime.now().getMinute());
+        stat.setSize(512);
+        stat.setATime(now.getTime());
+        stat.setCTime(now.getTime());
+        stat.setMTime(now.getTime());
+        stat.setUid(0000);
+        stat.setGid(0000);
+        stat.setMode(0755 | UnixPermission.S_IFDIR);
+        stat.setDev(19);
+        stat.setRdev(23);
+        stat.setNlink(13);
+        return stat;
     }
 
     /**
@@ -1569,51 +1671,6 @@ public class FsSqlDriver {
                   ps.setTimestamp(2, new Timestamp(System.currentTimeMillis()));
                   ps.setLong(3, tagId);
               });
-    }
-
-    /**
-     * set storage info of inode in t_storageinfo table. once storage info is stores, it's not
-     * allowed to modify it
-     *
-     * @param inode
-     * @param storageInfo
-     */
-    void setStorageInfo(FsInode inode, InodeStorageInformation storageInfo) {
-        _jdbc.update(
-              "INSERT INTO t_storageinfo (SELECT * FROM (VALUES (?,?,?,?)) v WHERE NOT EXISTS " +
-                    "(SELECT 1 FROM t_storageinfo WHERE inumber=?))",
-              ps -> {
-                  ps.setLong(1, inode.ino());
-                  ps.setString(2, storageInfo.hsmName());
-                  ps.setString(3, storageInfo.storageGroup());
-                  ps.setString(4, storageInfo.storageSubGroup());
-                  ps.setLong(5, inode.ino());
-              });
-    }
-
-    /**
-     * returns storage information like storage group, storage sub group, hsm, retention policy and
-     * access latency associated with the inode.
-     *
-     * @param inode
-     * @return
-     * @throws ChimeraFsException
-     */
-    InodeStorageInformation getStorageInfo(FsInode inode) throws ChimeraFsException {
-        try {
-            return _jdbc.queryForObject(
-                  "SELECT ihsmName, istorageGroup, istorageSubGroup FROM t_storageinfo WHERE inumber=?",
-                  (rs, rowNum) -> {
-                      String hsmName = rs.getString("ihsmName");
-                      String storageGroup = rs.getString("istoragegroup");
-                      String storageSubGroup = rs.getString("istoragesubgroup");
-                      return new InodeStorageInformation(inode, hsmName, storageGroup,
-                            storageSubGroup);
-                  },
-                  inode.ino());
-        } catch (IncorrectResultSizeDataAccessException e) {
-            throw FileNotFoundChimeraFsException.of(inode);
-        }
     }
 
     /**
@@ -2138,11 +2195,22 @@ public class FsSqlDriver {
         setInodeAttributes(inode, 0, new Stat());
     }
 
-    Long getLabel(String labelname) {
-        return _jdbc.queryForObject("SELECT label_id FROM t_labels where labelname=?",
+
+    /**
+     * Returns the id of the label.
+     *
+     * @param labelname extended attribute name.
+     * @throws ChimeraFsException
+     */
+    Long getLabel(String labelname) throws NoLabelChimeraException {
+        try {
+            return _jdbc.queryForObject("SELECT label_id FROM t_labels where labelname=?",
               (rs, rn) -> {
                   return (rs.getLong("label_id"));
               }, labelname);
+        } catch (EmptyResultDataAccessException e) {
+            throw new NoLabelChimeraException("wrong label");
+        }
 
     }
 
@@ -2212,6 +2280,65 @@ public class FsSqlDriver {
         setInodeAttributes(inode, 0, new Stat());
     }
 
+    /**
+     * Returns {@link DirectoryStreamB} of ChimeraDirectoryEntry for listing labels.     *
+     *
+     * @return stream of list of existing labels
+     */
+    DirectoryStreamB<ChimeraDirectoryEntry> labelsDirectoryStream(FsInode dir)
+            throws ChimeraFsException {
+
+        return new DirectoryStreamB<ChimeraDirectoryEntry>() {
+
+            final LabelsDirectorySreamImpl stream = new LabelsDirectorySreamImpl(
+                    _jdbc);
+
+
+            @Override
+            public Iterator<ChimeraDirectoryEntry> iterator() {
+                return new Iterator<ChimeraDirectoryEntry>() {
+                    private ChimeraDirectoryEntry current = innerNext();
+
+                    @Override
+                    public boolean hasNext() {
+                        return current != null;
+                    }
+
+                    @Override
+                    public ChimeraDirectoryEntry next() {
+                        if (current == null) {
+                            throw new NoSuchElementException("No more entries");
+                        }
+                        ChimeraDirectoryEntry entry = current;
+                        current = innerNext();
+                        return entry;
+                    }
+
+                    protected ChimeraDirectoryEntry innerNext() {
+                        try {
+                            ResultSet rs = stream.next();
+                            if (rs == null) {
+                                return null;
+                            }
+
+                            Stat stat = toStatForLabel(rs);
+                            FsInode inode = new FsInode_LABEL(dir.getFs(), rs.getLong("label_id"));
+                            return new ChimeraDirectoryEntry(rs.getString("labelname"), inode, stat);
+
+                        } catch (SQLException e) {
+                            LOGGER.error("failed to fetch next entry: {}", e.getMessage());
+                            return null;
+                        }
+                    }
+                };
+            }
+
+            @Override
+            public void close() throws IOException {
+                stream.close();
+            }
+        };
+    }
 
     /**
      * Returns {@link DirectoryStreamB} of ChimeraDirectoryEntry for virtual directory.     *
@@ -2353,5 +2480,13 @@ public class FsSqlDriver {
             return null;
         }
         return _jdbc.queryForObject("SELECT id FROM t_qos_policy WHERE name=?", Integer.class, name);
+    }
+
+    /**
+     * Close driver and free DB resources.
+     */
+    @Override
+    public void close() {
+        // to be overwritten by subclasses
     }
 }

@@ -4,7 +4,7 @@ Building dCache
 Requirements
 ------------
 
-To build dCache, you need Maven 3.5.0 or newer and Java-17 for building. Running the resulting
+To build dCache, you need Maven 3.5.0 or newer and Java-17 (or Java-21) for building. Running the resulting
 binaries on newer JDKs should be possible.
 
 Building
@@ -44,7 +44,7 @@ This phase can also be combined with other phases, e.g.:
 Packaging dCache
 ----------------
 
-RPM and DEB packages can be build by compiling the _packages/fhs_
+RPM and DEB packages can be built by compiling the _packages/fhs_
 module with the _rpm_ and _deb_ profiles, respectively, i.e.:
 
     mvn clean package -am -pl packages/fhs -P rpm
@@ -75,7 +75,7 @@ phase with the _rpm_ profile on _modules/srm-client_ module, i.e.:
 DEB packages have not been defined for srmclient.
 
 The generated packages can be found in the target directory of the
-respectively module. RPMs are in the RPMS subdirectory.
+respective module. RPMs are in the RPMS subdirectory.
 
 
 The dCache tarball package is build by packaging the _packages/tar_
@@ -96,6 +96,14 @@ profile for the `tar` packaging:
 
     mvn clean package -am -pl packages/tar -P container
 
+
+To run
+
+    podman run -ti --name my-dcache --rm -u 0:0 -v `pwd`/my-layout.conf:/opt/dcache/etc/layouts/docker-layout.conf:Z  -v `pwd`/pool:/pool:Z dcache/dcache:11.0 my-domain
+
+The container runs dcache as uid 994 and gid 1000. The argument `-u 0:0` tells podman to run it as root, which is mapped to the local user that starts the container.
+The argument passed to the container is the dcache domain  to start. In the example above, it will start the domain `my-domain` defined in the local layout file
+`my-layout.conf`. If no argument is provided, that domain with the container hostname (value returned by the hostname command inside the container) is started.
 
 The system-test module
 ----------------------
@@ -149,11 +157,15 @@ will move the pool_write pool to version 2.7.5. The utility can however not
 compensate for changes in configuration properties or database schemas between
 versions. Such incompatibilities have to be resolved manually.
 
+The log files are available in the directory:
+
+    packages/system-test/target/dcache/var/log/
+
 
 Unit tests
 ----------
 
 By default, Maven executes all unit tests while building. This can be
-time consuming and will fail if no internet connection is
+time-consuming and will fail if no internet connection is
 available. The unit tests can be disabled by appending the `-DskipTests`
 option to any mvn command.

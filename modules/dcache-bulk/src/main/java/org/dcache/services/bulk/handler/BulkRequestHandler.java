@@ -171,6 +171,11 @@ public final class BulkRequestHandler implements BulkSubmissionHandler,
                     }
                 });
             }
+        } catch (BulkRequestNotFoundException e) {
+            /*
+             * Request has been cleared already.
+             */
+            LOGGER.debug("checkTerminated, request {} was auto-cleared on termination.", id);
         } catch (BulkStorageException e) {
             LOGGER.warn("checkTerminated, check for cancel on failure {}: {}.", id,
                   e.toString());
@@ -313,6 +318,12 @@ public final class BulkRequestHandler implements BulkSubmissionHandler,
                 statistics.incrementRequestsCompleted();
                 return true;
             }
+        } catch (BulkRequestNotFoundException e) {
+            /*
+             * Request has been cleared already.
+             */
+            LOGGER.debug("setStateIfTerminated, request {} was auto-cleared on termination.", id);
+            return true;
         } catch (BulkServiceException e) {
             LOGGER.error("Failed to post-process request {}: {}.", id,
                   e.toString());

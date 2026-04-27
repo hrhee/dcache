@@ -2,6 +2,8 @@ package org.dcache.chimera.nfsv41.mover;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.channels.WritableByteChannel;
+
 import org.dcache.nfs.nfsstat;
 import org.dcache.nfs.v4.AbstractNFSv4Operation;
 import org.dcache.nfs.v4.CompoundContext;
@@ -10,17 +12,21 @@ import org.dcache.nfs.v4.xdr.READ4resok;
 import org.dcache.nfs.v4.xdr.nfs_argop4;
 import org.dcache.nfs.v4.xdr.nfs_opnum4;
 import org.dcache.nfs.v4.xdr.nfs_resop4;
-import org.dcache.oncrpc4j.rpc.OncRpcException;
 import org.dcache.oncrpc4j.xdr.Xdr;
 import org.dcache.oncrpc4j.xdr.XdrEncodingStream;
 import org.dcache.pool.repository.RepositoryChannel;
-import org.glassfish.grizzly.Buffer;
+import org.glassfish.grizzly.FileChunk;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class EDSOperationREAD extends AbstractNFSv4Operation {
 
     private static final Logger _log = LoggerFactory.getLogger(EDSOperationREAD.class.getName());
+
+    /**
+     * Empty buffer to be returned when offset is beyond the end of file.
+     */
+    private static final ByteBuffer EMPTY_BUFFER = ByteBuffer.allocate(0).asReadOnlyBuffer();
 
     private final NfsTransferService nfsTransferService;
 
@@ -46,55 +52,28 @@ public class EDSOperationREAD extends AbstractNFSv4Operation {
             }
 
             RepositoryChannel fc = mover.getMoverChannel();
-            var gBuffer = nfsTransferService.getIOBufferAllocator().allocate(count);
-            int bytesToRead = count;
+            long filesize = fc.size();
 
-            int rc = -1;
-            if (gBuffer.isComposite()) {
-                // composite buffers built out of array of simple buffers, thus we have to fill
-                // each buffer manually
-                var bArray = gBuffer.toBufferArray();
-                Buffer[] bufs = bArray.getArray();
-                int size = bArray.size();
-
-                for(int i = 0; bytesToRead > 0  && i < size; i++) {
-
-                    ByteBuffer directChunk = bufs[i].toByteBuffer();
-                    directChunk.clear().limit(Math.min(directChunk.capacity(), bytesToRead));
-                    rc = fc.read(directChunk, offset + count - bytesToRead);
-                    if (rc < 0) {
-                        break;
-                    }
-
-                    // the positions of Buffer and ByteBuffer are independent, thus keep it in sync manually
-                    gBuffer.position(gBuffer.position() + directChunk.position());
-                    directChunk.flip();
-
-                    bytesToRead -= rc;
-                }
-            } else {
-
-                ByteBuffer directBuffer = gBuffer.toByteBuffer();
-                directBuffer.clear().limit(count);
-                rc = fc.read(directBuffer, offset);
-                if (rc > 0) {
-                    // the positions of Buffer and ByteBuffer are independent, thus keep it in sync manually
-                    gBuffer.position(directBuffer.position());
-                    bytesToRead -= rc;
-                }
+            // check if offset is beyond the end of file. Return empty buffer with eof set.
+            // https://datatracker.ietf.org/doc/html/rfc5661#section-18.22.3
+            if (offset >= filesize) {
+                res.status = nfsstat.NFS_OK;
+                res.resok4 = new READ4resok();
+                res.resok4.data = EMPTY_BUFFER;
+                res.resok4.eof = true;
+                return;
             }
 
-            int bytesRead = count - bytesToRead;
-            gBuffer.flip();
+            int bytesToRead = (int) Math.min(filesize - offset, count);
+            var fileChunk = new ZeroCopyFileChunk(fc, offset, bytesToRead);
 
             res.status = nfsstat.NFS_OK;
-            res.resok4 = new ShallowREAD4resok(gBuffer);
-            if (rc == -1 || offset + bytesRead == fc.size()) {
+            res.resok4 = new ZeroCopyREAD4resok(fileChunk);
+            if (offset + bytesToRead == filesize) {
                 res.resok4.eof = true;
             }
 
-            _log.debug("MOVER: {}@{} read, {} requested.", bytesRead, offset,
-                  _args.opread.count.value);
+            _log.debug("MOVER: {}@{} read, {} requested.", bytesToRead, offset, _args.opread.count.value);
 
         } catch (IOException ioe) {
             _log.error("DSREAD: ", ioe);
@@ -105,18 +84,62 @@ public class EDSOperationREAD extends AbstractNFSv4Operation {
         }
     }
 
-    // version of READ4resok that uses shallow encoding to avoid extra copy
-    private static class ShallowREAD4resok extends READ4resok {
+    // version of READ4resok that uses zero copy FileChunk
+    private static class ZeroCopyREAD4resok extends READ4resok {
 
-        private final Buffer buf;
-        public ShallowREAD4resok(Buffer buf) {
-            this.buf = buf;
+        private FileChunk fileChunk;
+
+        public ZeroCopyREAD4resok(FileChunk fileChunk) {
+            this.fileChunk = fileChunk;
         }
 
-        public void xdrEncode(XdrEncodingStream xdr)
-              throws OncRpcException, IOException {
+        public void xdrEncode(XdrEncodingStream xdr) {
             xdr.xdrEncodeBoolean(eof);
-            ((Xdr)xdr).xdrEncodeShallowByteBuffer(buf);
+            ((Xdr)xdr).xdrEncodeFileChunk(fileChunk);
+        }
+    }
+
+    /**
+     * FileChunk implementation that uses zero copy transferTo method of FileChannel.
+     */
+    private static class ZeroCopyFileChunk implements FileChunk {
+
+        private final RepositoryChannel channel;
+        private long position;
+        private long count;
+
+        public ZeroCopyFileChunk(RepositoryChannel channel, long position, int count ) {
+            this.channel = channel;
+            this.position = position;
+            this.count = count;
+        }
+
+        @Override
+        public long writeTo(WritableByteChannel writableByteChannel) throws IOException {
+            long n =  channel.transferTo(position, count, writableByteChannel);
+            count -= n;
+            position += n;
+            return n;
+        }
+
+        @Override
+        public boolean hasRemaining() {
+            return count > 0;
+        }
+
+        @Override
+        public int remaining() {
+            return (int)count;
+        }
+
+        @Override
+        public boolean release() {
+            return true;
+        }
+
+        @Override
+        public boolean isExternal() {
+            return true;
         }
     }
 }

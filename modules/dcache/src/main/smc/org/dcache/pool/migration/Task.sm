@@ -1,5 +1,4 @@
 %{
-//
 %}
 
 %class Task
@@ -11,6 +10,14 @@
 %map TASK
 %%
 Queued
+Entry
+{
+        logStateEntry(getState().getName());
+}
+Exit
+{
+        logStateExit(getState().getName());
+}
 {
         startWithoutLocations
                 GettingLocations
@@ -36,7 +43,12 @@ Queued
 GettingLocations
 Entry
 {
+        logStateEntry(getState().getName());
         queryLocations();
+}
+Exit
+{
+        logStateExit(getState().getName());
 }
 {
         query_timeout
@@ -70,9 +82,15 @@ Entry
                 {
                 }
         query_success
-                [ !ctxt.isMetaOnly() ]
+                [ !ctxt.isMetaOnly() && ctxt.moreReplicasPossible() ]
                 InitiatingCopy
                 {
+                }
+        query_success
+                [ !ctxt.isMetaOnly() ]
+                Done
+                {
+                        notifyCompletedWithInsufficientReplicas();
                 }
         query_success
                 Failed
@@ -86,7 +104,12 @@ Entry
 UpdatingExistingFile
 Entry
 {
+        logStateEntry(getState().getName());
         updateExistingReplica();
+}
+Exit
+{
+        logStateExit(getState().getName());
 }
 {
         copy_timeout
@@ -95,7 +118,7 @@ Entry
                 {
                 }
         copy_timeout
-                [ ctxt.isEager() && !ctxt.isMetaOnly() ]
+                [ ctxt.isEager() && !ctxt.isMetaOnly() && ctxt.moreReplicasPossible() ]
                 InitiatingCopy
                 {
                 }
@@ -111,7 +134,7 @@ Entry
                         updateExistingReplica();
                 }
         copy_noroute
-                [ ctxt.isEager() && !ctxt.isMetaOnly() ]
+                [ ctxt.isEager() && !ctxt.isMetaOnly() && ctxt.moreReplicasPossible() ]
                 InitiatingCopy
                 {
                 }
@@ -133,7 +156,7 @@ Entry
                         updateExistingReplica();
                 }
         copy_failure(rc: Integer, cause: Object)
-                [ !ctxt.isMetaOnly() ]
+                [ !ctxt.isMetaOnly() && ctxt.moreReplicasPossible() ]
                 InitiatingCopy
                 {
                 }
@@ -181,6 +204,7 @@ Entry
         messageArrived(message: PoolMigrationCopyFinishedMessage)
                 Done
                 {
+                        notifyCompleted();
                 }
 
 }
@@ -189,7 +213,12 @@ Entry
 InitiatingCopy
 Entry
 {
+        logStateEntry(getState().getName());
         initiateCopy();
+}
+Exit
+{
+        logStateExit(getState().getName());
 }
 {
         copy_success
@@ -197,9 +226,21 @@ Entry
                 {
                 }
         copy_nopools
+                [ !ctxt.getWaitForTargets() ]
+                Done
+                {
+                        notifyCompletedWithInsufficientReplicas();
+                }
+        copy_nopools
+                [ ctxt.getWaitForTargets() ]
                 Failed
                 {
-                        fail(NO_POOL_ONLINE, "No targets");
+                        fail(NO_POOL_ONLINE, "No targets available");
+                }
+        copy_nopools
+                Done
+                {
+                        failPermanently(NO_POOL_ONLINE, "No targets available");
                 }
         copy_noroute
                 Failed
@@ -266,12 +307,21 @@ Entry
         messageArrived(message: PoolMigrationCopyFinishedMessage)
                 Done
                 {
+                        notifyCompleted();
                 }
 }
 
 // Need to create more copies and received PoolMigrationCopyFinishedMessage ahead of
 // PoolMigrationCopyReplicaMessage reply. Wait for reply before proceeding.
 WaitingForCopyReplicaReply
+Entry
+{
+        logStateEntry(getState().getName());
+}
+Exit
+{
+        logStateExit(getState().getName());
+}
 {
         copy_success
                 [ ctxt.hasMoreLocations() ]
@@ -279,9 +329,15 @@ WaitingForCopyReplicaReply
                 {
                 }
         copy_success
-                [ !ctxt.isMetaOnly() ]
+                [ !ctxt.isMetaOnly() && ctxt.moreReplicasPossible() ]
                 InitiatingCopy
                 {
+                }
+        copy_success
+                [ !ctxt.isMetaOnly() ]
+                Done
+                {
+                        notifyCompletedWithInsufficientReplicas();
                 }
         copy_success
                 Failed
@@ -289,9 +345,15 @@ WaitingForCopyReplicaReply
                         failPermanently(FILE_NOT_IN_REPOSITORY, "File skipped because it does not have enough existing replicas");
                 }
         copy_nopools
+                [ !ctxt.getWaitForTargets() ]
+                Done
+                {
+                        notifyCompletedWithInsufficientReplicas();
+                }
+        copy_nopools
                 Failed
                 {
-                        fail(NO_POOL_ONLINE, "No targets");
+                        fail(NO_POOL_ONLINE, "No targets available");
                 }
         copy_noroute
                 Failed
@@ -325,11 +387,13 @@ WaitingForCopyReplicaReply
 Copying
 Entry
 {
+        logStateEntry(getState().getName());
         startTimer(ctxt.getPingPeriod());
 }
 Exit
 {
         stopTimer();
+        logStateExit(getState().getName());
 }
 {
         timer
@@ -360,6 +424,12 @@ Exit
                 {
                 }
         messageArrived(message: PoolMigrationCopyFinishedMessage)
+                [ ctxt.needsMoreReplicas() && ! (ctxt.moreReplicasPossible() || ctxt.isMetaOnly()) ]
+                Done
+                {
+                        notifyCompletedWithInsufficientReplicas();
+                }
+        messageArrived(message: PoolMigrationCopyFinishedMessage)
                 [ ctxt.needsMoreReplicas() && !ctxt.isMetaOnly() ]
                 InitiatingCopy
                 {
@@ -378,6 +448,7 @@ Exit
         messageArrived(message: PoolMigrationCopyFinishedMessage)
                 Done
                 {
+                        notifyCompleted();
                 }
         cancel
                 Cancelling
@@ -389,7 +460,12 @@ Exit
 Pinging
 Entry
 {
+        logStateEntry(getState().getName());
         ping();
+}
+Exit
+{
+        logStateExit(getState().getName());
 }
 {
         ping_success
@@ -436,6 +512,12 @@ Entry
                 {
                 }
         messageArrived(message: PoolMigrationCopyFinishedMessage)
+                [ ctxt.needsMoreReplicas() && ! (ctxt.moreReplicasPossible() || ctxt.isMetaOnly()) ]
+                Done
+                {
+                        notifyCompletedWithInsufficientReplicas();
+                }
+        messageArrived(message: PoolMigrationCopyFinishedMessage)
                 [ ctxt.needsMoreReplicas() && !ctxt.isMetaOnly() ]
                 InitiatingCopy
                 {
@@ -454,6 +536,7 @@ Entry
         messageArrived(message: PoolMigrationCopyFinishedMessage)
                 Done
                 {
+                        notifyCompleted();
                 }
         cancel
                 Cancelling
@@ -466,11 +549,13 @@ Entry
 NoResponse
 Entry
 {
+        logStateEntry(getState().getName());
         startTimer(ctxt.getNoResponseTimeout());
 }
 Exit
 {
         stopTimer();
+        logStateExit(getState().getName());
 }
 {
         timer
@@ -528,6 +613,12 @@ Exit
                 {
                 }
         messageArrived(message: PoolMigrationCopyFinishedMessage)
+                [ ctxt.needsMoreReplicas() && ! (ctxt.moreReplicasPossible() || ctxt.isMetaOnly()) ]
+                Done
+                {
+                        notifyCompletedWithInsufficientReplicas();
+                }
+        messageArrived(message: PoolMigrationCopyFinishedMessage)
                 [ ctxt.needsMoreReplicas() && !ctxt.isMetaOnly() ]
                 InitiatingCopy
                 {
@@ -546,6 +637,7 @@ Exit
         messageArrived(message: PoolMigrationCopyFinishedMessage)
                 Done
                 {
+                        notifyCompleted();
                 }
         cancel
                 Cancelling
@@ -558,11 +650,13 @@ Exit
 WaitingForCopyFinishedMessage
 Entry
 {
+        logStateEntry(getState().getName());
         startTimer(ctxt.getTaskDeadTimeout());
 }
 Exit
 {
         stopTimer();
+        logStateExit(getState().getName());
 }
 {
         timer
@@ -596,6 +690,12 @@ Exit
                 {
                 }
         messageArrived(message: PoolMigrationCopyFinishedMessage)
+                [ ctxt.needsMoreReplicas() && ! (ctxt.moreReplicasPossible() || ctxt.isMetaOnly()) ]
+                Done
+                {
+                        notifyCompletedWithInsufficientReplicas();
+                }
+        messageArrived(message: PoolMigrationCopyFinishedMessage)
                 [ ctxt.needsMoreReplicas() && !ctxt.isMetaOnly() ]
                 InitiatingCopy
                 {
@@ -614,18 +714,25 @@ Exit
         messageArrived(message: PoolMigrationCopyFinishedMessage)
                 Done
                 {
+                        notifyCompleted();
                 }
 }
 
 MovingPin
 Entry
 {
+        logStateEntry(getState().getName());
         movePin();
+}
+Exit
+{
+        logStateExit(getState().getName());
 }
 {
         move_success
                 Done
                 {
+                        notifyCompleted();
                 }
         move_failure(rc: Integer, cause: Object)
                 Failed
@@ -657,12 +764,14 @@ Entry
 Cancelling
 Entry
 {
+        logStateEntry(getState().getName());
         startTimer(ctxt.getTaskDeadTimeout());
         cancelCopy();
 }
 Exit
 {
         stopTimer();
+        logStateExit(getState().getName());
 }
 {
         timer
@@ -689,6 +798,7 @@ Exit
                 [ message.getReturnCode() == 0 ]
                 Done
                 {
+                        notifyCompleted();
                 }
         cancel_success
                 nil
@@ -716,7 +826,12 @@ Exit
 Cancelled
 Entry
 {
+        logStateEntry(getState().getName());
         notifyCancelled();
+}
+Exit
+{
+        logStateExit(getState().getName());
 }
 {
 }
@@ -724,6 +839,14 @@ Entry
 // Something went wrong. In some cases the transfer could have
 // succeeded, but we don't know.
 Failed
+Entry
+{
+        logStateEntry(getState().getName());
+}
+Exit
+{
+        logStateExit(getState().getName());
+}
 {
 }
 
@@ -731,7 +854,11 @@ Failed
 Done
 Entry
 {
-        notifyCompleted();
+        logStateEntry(getState().getName());
+}
+Exit
+{
+        logStateExit(getState().getName());
 }
 {
 }

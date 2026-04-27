@@ -63,14 +63,12 @@ public class HTMLWriter extends PrintWriter {
         println("<link type='text/css' rel='stylesheet' href='" + css + "'>");
         println("<title>" + title + "</title>");
         println("<script type='text/javascript' src='/scripts/sorting/common.js'></script>");
-        println("<script type='text/javascript' src='/scripts/sorting/css.js'></script>");
-        println(
-              "<script type='text/javascript' src='/scripts/sorting/standardista-table-sorting.js'></script>");
+        println("<script type='text/javascript' src='/scripts/sorting/sorttable.js'></script>");
         println("</head>");
         println("<body>");
         println("<div id='header'>");
         println("<div id='bird_small'>");
-        println("<a href='/'><img src='/images/eagleredtrans.gif'></a>");
+        println("<a href='/'><img src='/images/dCache-logo.svg'></a>");
         println("<br/>Birds Home</div>");
         println("<div id='bird_large'><img src='/images/eagle-grey.gif'></div>");
         println("</div>");

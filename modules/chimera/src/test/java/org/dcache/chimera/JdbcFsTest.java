@@ -1649,6 +1649,16 @@ public class JdbcFsTest extends ChimeraTestCaseHelper {
     }
 
     @Test
+    public void testReadNullTag() throws Exception {
+
+        FsInode top = _rootInode.mkdir("top");
+        _fs.createTag(top, "aTag");
+
+        int n = _fs.getTag(top, "aTag", new byte[10], 0, 10);
+        assertThat("Tag without content should return zero bytes", n, is(0));
+    }
+
+    @Test
     public void testTashTimestampOnRemove() throws Exception {
         final String name = "testTashTimestampOnRemove";
         FsInode inode = _rootInode.create(name, 0, 0, 0644);
@@ -1858,7 +1868,6 @@ public class JdbcFsTest extends ChimeraTestCaseHelper {
         FsInode dir = _fs.mkdir("/test");
         FsInode inodeA = _fs.createFile(dir, "aFile");
         FsInode inodeB = _fs.createFile(dir, "bFile");
-        FsInode inodeC = _fs.createFile(dir, "cFile");
 
         FsInode dir1 = _fs.mkdir("/test1");
         FsInode inodeB2 = _fs.createFile(dir1, "bFile");
@@ -1871,7 +1880,9 @@ public class JdbcFsTest extends ChimeraTestCaseHelper {
             _fs.addLabel(inodeB2, labelName);
         }
 
-        FsInode newInode = _fs.inodeOf(_rootInode, (".(collection)(cat)"), NO_STAT);
+        FsInode inode = new FsInode_LABELS(dir.getFs(), 0L);
+
+        FsInode newInode = _fs.inodeOf(inode, ("cat"), NO_STAT);
 
         Collection<String> dirLs = new HashSet<>();
         try (DirectoryStreamB<ChimeraDirectoryEntry> dirStream = _fs.newDirectoryStream(

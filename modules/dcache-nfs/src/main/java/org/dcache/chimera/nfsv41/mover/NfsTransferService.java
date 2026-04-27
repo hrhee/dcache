@@ -38,6 +38,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
@@ -75,9 +76,7 @@ import org.dcache.nfs.v4.xdr.nfs4_prot;
 import org.dcache.nfs.v4.xdr.nfs_argop4;
 import org.dcache.nfs.v4.xdr.nfs_opnum4;
 import org.dcache.nfs.v4.xdr.stateid4;
-import org.dcache.oncrpc4j.grizzly.GrizzlyUtils;
 import org.dcache.oncrpc4j.rpc.IoStrategy;
-import org.dcache.oncrpc4j.rpc.OncRpcException;
 import org.dcache.oncrpc4j.rpc.OncRpcProgram;
 import org.dcache.oncrpc4j.rpc.OncRpcSvc;
 import org.dcache.oncrpc4j.rpc.OncRpcSvcBuilder;
@@ -88,17 +87,12 @@ import org.dcache.pool.classic.Cancellable;
 import org.dcache.pool.classic.PostTransferService;
 import org.dcache.pool.classic.TransferService;
 import org.dcache.pool.movers.Mover;
-import org.dcache.pool.movers.MoverFactory;
 import org.dcache.pool.repository.ReplicaDescriptor;
 import org.dcache.pool.repository.Repository;
-import org.dcache.util.ByteUnit;
+
 import org.dcache.util.NetworkUtils;
 import org.dcache.util.PortRange;
 import org.dcache.vehicles.DoorValidateMoverMessage;
-import org.glassfish.grizzly.Buffer;
-import org.glassfish.grizzly.memory.MemoryManager;
-import org.glassfish.grizzly.memory.PooledMemoryManager;
-import org.ietf.jgss.GSSException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Required;
@@ -109,7 +103,7 @@ import org.springframework.beans.factory.annotation.Required;
  * @since 1.9.11
  */
 public class NfsTransferService
-      implements MoverFactory, TransferService<NfsMover>, CellCommandListener, CellInfoProvider,
+      implements TransferService<NfsMover>, CellCommandListener, CellInfoProvider,
       CellIdentityAware {
 
     private static final Logger _log = LoggerFactory.getLogger(NfsTransferService.class);
@@ -188,35 +182,10 @@ public class NfsTransferService
      */
     private boolean _enableTls;
 
-
-    // This is a workaround for the issue with the grizzly allocator.
-    // (which uses a fraction of heap memory for direct buffers, instead of configured direct memory limit
-    // See: https://github.com/eclipse-ee4j/grizzly/issues/2201
-
-    // as we know in advance how much memory is going to be used, we can pre-calculate the desired fraction.
-    // The expected direct buffer allocation is `<chunk size> * <expected concurrency>` (with an assumption,
-    // that we use only one memory pool, i.g. no grow).
-
-    private final int expectedConcurrency =  GrizzlyUtils.getDefaultWorkerPoolSize();
-    private final int allocationChunkSize = ByteUnit.MiB.toBytes(1); // one pool with 1MB chunks (max NFS rsize)
-    private final float heapFraction = (allocationChunkSize * expectedConcurrency) / (float) Runtime.getRuntime().maxMemory();
-
     /**
-     * Buffer pool for IO operations.
-     * One pool with 1MB chunks (max NFS rsize).
+     * IP addresses that should be advertised to clients.
      */
-    private final MemoryManager<? extends Buffer> pooledBufferAllocator =
-            new PooledMemoryManager(// one pool with 1MB chunks (max NFS rsize)
-                    allocationChunkSize / 16, // Grizzly allocates at least 16 chunks per slice,
-                                              // for 1MB buffers 16MB in total.
-                                              // Pass 1/16 of the desired buffer size to compensate the over commitment.
-                    1, // number of pools
-                    2, // grow facter per pool, ignored, see above
-                    expectedConcurrency, // expected concurrency
-                    heapFraction, // fraction of heap memory to use for direct buffers
-                    PooledMemoryManager.DEFAULT_PREALLOCATED_BUFFERS_PERCENTAGE,
-                    true  // direct buffers
-            );
+    private String[] _multipathAddresses;
 
     @Override
     public void setCellAddress(CellAddressCore address) {
@@ -236,7 +205,12 @@ public class NfsTransferService
         tryToStartRpcService();
 
         int localPort = _rpcService.getInetSocketAddress(IpProtocolType.TCP).getPort();
-        _localSocketAddresses = localSocketAddresses(NetworkUtils.getLocalAddresses(), localPort);
+
+        if (_multipathAddresses == null || _multipathAddresses.length == 0) {
+            _localSocketAddresses = localSocketAddresses(NetworkUtils.getLocalAddresses(), localPort);
+        } else {
+            _localSocketAddresses = localSocketAddresses(_multipathAddresses, localPort);
+        }
 
         _embededDS = new NFSServerV41.Builder()
               .withOperationExecutor(_operationFactory)
@@ -401,6 +375,10 @@ public class NfsTransferService
         _enableTls = enableTls;
     }
 
+    public void setMultipathAddresses(String[] multipathAddresses) {
+        _multipathAddresses = multipathAddresses;
+    }
+
     public void shutdown() throws IOException {
         _cleanerExecutor.shutdown();
         _embededDS.getStateHandler().shutdown();
@@ -462,6 +440,14 @@ public class NfsTransferService
               .toArray(InetSocketAddress[]::new);
     }
 
+
+    private InetSocketAddress[] localSocketAddresses(String[] addresses, int port) {
+        return Arrays.stream(addresses)
+              .map(InetAddresses::forString)
+              .map(a -> new InetSocketAddress(a, port))
+              .toArray(InetSocketAddress[]::new);
+    }
+
     /**
      * Add mover into list of allowed transfers.
      *
@@ -487,7 +473,7 @@ public class NfsTransferService
         NfsMover mover = _activeIO.get(stateid);
         if (mover != null) {
             if (mover.attachSession(context.getSession())) {
-                mover.setLocalEndpoint(context.getRemoteSocketAddress());
+                mover.setLocalEndpoint(context.getLocalSocketAddress());
             }
             mover.attachSession(context.getSession());
         }
@@ -659,14 +645,7 @@ public class NfsTransferService
     public void getInfo(PrintWriter pw) {
         CellInfoProvider.super.getInfo(pw);
         var endpoint = _rpcService.getInetSocketAddress(IpProtocolType.TCP);
-        pw.printf("   Listening on: %s:%d\n", InetAddresses.toUriString(endpoint.getAddress()), endpoint.getPort());
-    }
-
-    /**
-     * Get IO buffer allocator.
-     * @return IO buffer allocator.
-     */
-    public MemoryManager<? extends Buffer> getIOBufferAllocator() {
-        return pooledBufferAllocator;
+        pw.printf("   Listening on       : %s:%d\n", InetAddresses.toUriString(endpoint.getAddress()), endpoint.getPort());
+        pw.printf("   Multipath addresses: %s\n", Optional.ofNullable(_multipathAddresses).map(Arrays::toString));
     }
 }

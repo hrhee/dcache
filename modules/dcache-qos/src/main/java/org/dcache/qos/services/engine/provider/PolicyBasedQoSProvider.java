@@ -59,10 +59,7 @@ documents or software obtained from this server.
  */
 package org.dcache.qos.services.engine.provider;
 
-import static org.dcache.qos.util.QoSPermissionUtils.canModifyQos;
-
 import diskCacheV111.util.CacheException;
-import diskCacheV111.util.PermissionDeniedCacheException;
 import diskCacheV111.util.PnfsId;
 import java.util.Collections;
 import java.util.EnumSet;
@@ -71,6 +68,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import javax.security.auth.Subject;
+
 import org.dcache.namespace.FileAttribute;
 import org.dcache.poolmanager.SerializablePoolMonitor;
 import org.dcache.qos.QoSDiskSpecification;
@@ -115,17 +113,6 @@ public class PolicyBasedQoSProvider extends ALRPStorageUnitQoSProvider {
             return null;
         }
 
-        FileAttributes attributes = descriptor.getAttributes();
-        if (attributes.isDefined(FileAttribute.QOS_POLICY) && attributes.getQosPolicy() == null) {
-            /*
-             * This is a lazily discovered change, so
-             * as a matter of consistency it calls for removal
-             * of the pnfsid from the engine's tracking tables.
-             */
-            engineDao.delete(update.getPnfsId());
-            return super.fetchRequirements(update, descriptor);
-        }
-
         return fetchRequirements(update, descriptor);
     }
 
@@ -133,9 +120,11 @@ public class PolicyBasedQoSProvider extends ALRPStorageUnitQoSProvider {
     public FileQoSRequirements fetchRequirements(FileQoSUpdate update, FileQoSRequirements descriptor)
           throws QoSException {
         FileAttributes attributes = descriptor.getAttributes();
-        String name = attributes.getQosPolicy();
+
+        String name = attributes.getQosPolicyIfPresent().orElse(null);
 
         if (name == null) {
+            engineDao.delete(update.getPnfsId());
             return super.fetchRequirements(update, descriptor);
         }
 
@@ -203,25 +192,14 @@ public class PolicyBasedQoSProvider extends ALRPStorageUnitQoSProvider {
 
         FileAttributes modifiedAttributes = new FileAttributes();
 
-        if (currentAttributes.isDefined(FileAttribute.QOS_POLICY)
-            && !newRequirements.hasRequiredQoSPolicy()) {
-            modifiedAttributes.setQosPolicy(null);  // remove the policy from the stored state
-            modifyRequirements(pnfsId, currentAttributes, modifiedAttributes, newRequirements,
-                  subject);
-            return;
-        }
-
         if (newRequirements.hasRequiredQoSPolicy()) {
             modifiedAttributes.setQosPolicy(newRequirements.getRequiredQoSPolicy());
             modifiedAttributes.setQosState(newRequirements.getRequiredQoSStateIndex());
+        } else {
+            modifiedAttributes.setQosPolicy(null);  // remove the policy from the stored state
         }
 
-        if (canModifyQos(subject, isEnableRoles(), currentAttributes)) {
-            pnfsHandler().setFileAttributes(pnfsId, modifiedAttributes);
-        } else {
-            throw new PermissionDeniedCacheException("User does not have permissions to set "
-                  + "attributes for " + newRequirements.getPnfsId());
-        }
+        modifyRequirements(pnfsId, currentAttributes, modifiedAttributes, newRequirements, subject);
     }
 
     @Required

@@ -4,12 +4,16 @@ import static java.util.Objects.requireNonNull;
 
 import com.google.common.base.Stopwatch;
 import com.google.common.base.Strings;
+import com.google.common.base.Throwables;
 import com.google.common.collect.Sets;
+import com.google.common.reflect.ClassPath;
+import com.google.common.reflect.ClassPath.ClassInfo;
 import diskCacheV111.util.CacheException;
 import diskCacheV111.util.FsPath;
 import diskCacheV111.util.PermissionDeniedCacheException;
 import dmg.cells.nucleus.CellCommandListener;
 import java.io.File;
+import java.lang.annotation.Annotation;
 import java.security.Principal;
 import java.util.Collection;
 import java.util.Collections;
@@ -19,6 +23,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import javax.security.auth.Subject;
 import javax.security.auth.kerberos.KerberosPrincipal;
 import org.dcache.auth.attributes.Activity;
@@ -34,7 +39,6 @@ import org.dcache.gplazma.monitor.LoginResult;
 import org.dcache.gplazma.monitor.LoginResultPrinter;
 import org.dcache.gplazma.monitor.RecordingLoginMonitor;
 import org.dcache.util.Args;
-import org.reflections.Reflections;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Required;
@@ -70,15 +74,42 @@ public class Gplazma2LoginStrategy implements LoginStrategy, CellCommandListener
     private Function<FsPath, PrefixRestriction> _createPrefixRestriction = PrefixRestriction::new;
     private Optional<String> _uploadPath = Optional.empty();
 
+
+    /**
+     * Returns the set of classes annotated with the given annotation.
+     * <p>
+     * This method scans the classpath for classes in the org.dcache.auth and
+     * org.globus.gsi.gssapi.jaas packages that are annotated with the specified annotation.
+     *
+     * @param annotation the annotation to look for
+     * @return a set of classes annotated with the specified annotation
+     */
+    private static Set<Class<?>> getAuthClasses(Class<? extends Annotation> annotation) {
+        try {
+            var cp = ClassPath.from(Thread.currentThread().getContextClassLoader());
+
+            var dcacheAuthClasses = cp.getTopLevelClassesRecursive("org.dcache.auth");
+            var globusGsiClasses = cp.getTopLevelClassesRecursive("org.globus.gsi.gssapi.jaas");
+
+            return Stream.concat(dcacheAuthClasses.stream(), globusGsiClasses.stream())
+                  .map(ClassInfo::load)
+                  .filter(c -> c.isAnnotationPresent(annotation))
+                  .collect(Collectors.toSet());
+        } catch (Exception e) {
+            LOGGER.error("Failed to scan for gPlazma2 principals: {}", e.getMessage());
+            Throwables.throwIfUnchecked(e);
+            throw new RuntimeException("Failed to scan for gPlazma2 principals", e);
+        }
+    }
+
     static {
         Stopwatch reflectionTimer = Stopwatch.createStarted();
-        Reflections principalPackages = new Reflections("org.dcache.auth",
-              "org.globus.gsi.gssapi.jaas");
-        AUTHENTICATION_INPUT = principalPackages.getTypesAnnotatedWith(AuthenticationInput.class);
+
+        AUTHENTICATION_INPUT = getAuthClasses(AuthenticationInput.class);
         AUTHENTICATION_INPUT.addAll(EXTERNAL_AUTHENTICATION_INPUT);
         LOGGER.debug("AUTHENTICATION_INPUT: {}", AUTHENTICATION_INPUT);
 
-        AUTHENTICATION_OUTPUT = principalPackages.getTypesAnnotatedWith(AuthenticationOutput.class);
+        AUTHENTICATION_OUTPUT = getAuthClasses(AuthenticationOutput.class);
         AUTHENTICATION_OUTPUT.addAll(EXTERNAL_AUTHENTICATION_OUTPUT);
         LOGGER.debug("AUTHENTICATION_OUTPUT: {}", AUTHENTICATION_OUTPUT);
 
@@ -238,31 +269,50 @@ public class Gplazma2LoginStrategy implements LoginStrategy, CellCommandListener
     }
 
     public static final String fh_explain_login =
-          "This command runs a test login with the supplied principals\n" +
-                "The result is tracked and an explanation is provided of how \n" +
-                "the result was obtained.\n\n" +
-                "The principal format is:\n" +
-                "  <short hand identifier:value>\n" +
-                "or\n" +
-                "  <class name:value>\n\n" +
-                "The support short hand identifiers are:\n" +
-                " dn\n" +
-                " gid\n" +
-                " kerberos\n" +
-                " fqan\n" +
-                " name\n" +
-                " origin\n" +
-                " oidc\n" +
-                " email\n" +
-                " uid\n" +
-                " username\n" +
-                " group\n\n" +
-                "All other types can be specific full qualified class names.\n\n" +
-                "Examples:\n" +
-                "  explain login \"dn:/C=DE/O=GermanGrid/OU=DESY/CN=testUser\" fqan:/test\n" +
-                "  explain login username:testuser\n" +
-                "  explain login org.dcache.auth.LoginNamePrincipal:testuser\n\n";
-    public static final String hh_explain_login = "<principal> [<principal> ...] # explain the result of login";
+            "This command runs a test login with the supplied principals and/or credentials.\n" +
+            "The result is tracked and an explanation is provided of how the result was\n" +
+            "obtained.\n\n" +
+            "The credential format is:\n" +
+            "    <identifier>:<value>\n" +
+            "The supported credential <identifier> values are:\n" +
+            "    token   a bearer token (e.g., an OIDC access token)\n\n"+
+            "Note that macaroons are processed by the door directly and not\n" +
+            "by gPlazma.  This means a macaroon cannot be provided as input\n" +
+            "to this command.\n\n"+
+            "The principal format is:\n" +
+            "    <identifier>:<value>\n" +
+            "or\n" +
+            "    <class name>:<value>\n\n" +
+            "The supported principal <identifier> values are:\n" +
+            "    dn        (org.globus.gsi.gssapi.jaas.GlobusPrincipal)\n"+
+            "              an X.509 Distinguished Name with slashes.\n" +
+            "    gid       (org.dcache.auth.GidPrincipal)\n" +
+            "              a numerical group ID\n" +
+            "    kerberos  (javax.security.auth.kerberos.KerberosPrincipal)\n" +
+            "              a Kerberos principal (e.g., paul@DESY.DE)\n" +
+            "    fqan      (org.dcache.auth.FQANPrincipal)\n" +
+            "              a VOMS fully qualified attribute name.\n" +
+            "    name      (org.dcache.auth.LoginNamePrincipal)\n" +
+            "              a desired username.\n" +
+            "    origin    (org.dcache.auth.Origin)\n" +
+            "              the client's IP address.\n" +
+            "    oidc      (org.dcache.auth.OidcSubjectPrincipal)\n" +
+            "              the sub claim and OP alias (e.g., SUB@OP).\n" +
+            "    email     (org.dcache.auth.EmailAddressPrincipal)\n" +
+            "              the user's email address.\n" +
+            "    uid       (org.dcache.auth.UidPrincipal)\n" +
+            "              a numerical user ID.\n" +
+            "    username  (org.dcache.auth.UserNamePrincipal)\n" +
+            "              a username.\n" +
+            "    group     (org.dcache.auth.GroupNamePrincipal)\n" +
+            "              a group name.\n\n" +
+            "All other types can be specific full qualified class names.\n\n" +
+            "Examples:\n" +
+            "    explain login \"dn:/C=DE/O=GermanGrid/OU=DESY/CN=testUser\" fqan:/test\n" +
+            "    explain login username:testuser\n" +
+            "    explain login token:eyJhbG[...]MVkA7UqQ\n" +
+            "    explain login org.dcache.auth.LoginNamePrincipal:testuser\n\n";
+    public static final String hh_explain_login = "<principal|credential> [<principal|credential> ...] # explain the result of login";
 
     public String ac_explain_login_$_1_99(Args args) {
         Subject subject = Subjects.subjectFromArgs(args.getArguments());

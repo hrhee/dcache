@@ -30,6 +30,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.PriorityQueue;
 import java.util.Queue;
+import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
@@ -1079,9 +1080,8 @@ public class CellNucleus implements ThreadFactory {
                     threadGroupList();
                     killThreads(threads);
                 }
-                _threads.destroy();
             } catch (IllegalThreadStateException e) {
-                _threads.setDaemon(true);
+                LOGGER.warn("Failed to join threads in {}: {}", _threads, e.getMessage());
             } catch (InterruptedException e) {
                 LOGGER.warn("Interrupted while waiting for threads");
             }
@@ -1168,8 +1168,15 @@ public class CellNucleus implements ThreadFactory {
         __cellGlue.routeDelete(route);
     }
 
-    CellRoute routeFind(CellAddressCore addr) {
-        return __cellGlue.getRoutingTable().find(addr, getZone(), true);
+    /**
+     * Finds a route to the specified cell or queue address. If no direct route is found, topic routes
+     * are searched.
+     * @param addr Cell address to find a route for.
+     * @return A set of routes to the specified address, or an empty set if no route was found.
+     */
+    Set<CellRoute> routeFind(CellAddressCore addr) {
+        var route =  __cellGlue.getRoutingTable().find(addr, getZone(), true);
+        return route == null ? __cellGlue.getRoutingTable().findTopicRoutes(addr) : Set.of(route);
     }
 
     public CellRoutingTable getRoutingTable() {

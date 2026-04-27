@@ -57,7 +57,6 @@ import org.dcache.acl.ACE;
 import org.dcache.acl.enums.RsType;
 import org.dcache.chimera.posix.Stat;
 import org.dcache.chimera.quota.QuotaHandler;
-import org.dcache.chimera.store.InodeStorageInformation;
 import org.dcache.util.Checksum;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -174,6 +173,7 @@ public class JdbcFs implements FileSystemProvider, LeaderLatchListener {
      */
     private static final int MAX_NAME_LEN = 255;
 
+
     /**
      * switch quota check on/off
      */
@@ -224,6 +224,14 @@ public class JdbcFs implements FileSystemProvider, LeaderLatchListener {
         if (_quotaEnabled) {
             _quota.scheduleRefreshQuota();
         }
+    }
+
+    public QuotaHandler getQuota() {
+        return _quota;
+    }
+
+    public boolean isQuotaEnabled() {
+        return _quotaEnabled;
     }
 
     public void setDefaultRetentionPolicy(RetentionPolicy rp) {
@@ -539,9 +547,10 @@ public class JdbcFs implements FileSystemProvider, LeaderLatchListener {
     @Override
     public DirectoryStreamB<ChimeraDirectoryEntry> newDirectoryStream(FsInode dir)
           throws ChimeraFsException {
-        if ((dir instanceof FsInode_LABEL)) {
-            //TODO the casting to FsInode_LABEL should be reconsidered
-            return _sqlDriver.virtualDirectoryStream(dir, ((FsInode_LABEL) dir).getLabel());
+        if(dir.type() == FsInodeType.LABELS){
+            return _sqlDriver.labelsDirectoryStream(dir);
+        }else if ((dir.type() == FsInodeType.LABEL)) {
+            return _sqlDriver.virtualDirectoryStream(dir, _sqlDriver.getLabelById(dir.ino()));
         } else {
             return _sqlDriver.newDirectoryStream(dir);
         }
@@ -552,6 +561,14 @@ public class JdbcFs implements FileSystemProvider, LeaderLatchListener {
           String labelname) throws ChimeraFsException {
         return _sqlDriver.virtualDirectoryStream(dir, labelname);
     }
+
+
+    @Override
+    public DirectoryStreamB<ChimeraDirectoryEntry> listLabelsStream(FsInode dir) throws ChimeraFsException {
+        return _sqlDriver.labelsDirectoryStream(dir);
+    }
+
+
 
     @Override
     public void remove(String path) throws ChimeraFsException {
@@ -621,7 +638,7 @@ public class JdbcFs implements FileSystemProvider, LeaderLatchListener {
         if (stat == null) {
             throw FileNotFoundChimeraFsException.of(inode);
         }
-        if (level == 0) {
+        if (level == 0 ){
             _inoCache.put(stat.getId(), stat.getIno());
             _idCache.put(stat.getIno(), stat.getId());
         }
@@ -722,6 +739,39 @@ public class JdbcFs implements FileSystemProvider, LeaderLatchListener {
 
     @Override
     public FsInode path2inode(String path, FsInode startFrom) throws ChimeraFsException {
+        //TODO check and add pnfsid Creation to FsInode_LABEL
+        if (path.equals("/.(collection)")) {
+            Stat stat = _sqlDriver.statLabelsParent();
+            FsInode labelInode = new FsInode_LABELS(this, 0L, stat);
+            return labelInode;
+        }
+
+        if (path.startsWith("/.(collection)")) {
+            Long labelId;
+            try {
+               String tempLabelId = path.substring("/.(collection)".length() + 1, path.length());
+                if (tempLabelId.contains("/")) {
+                    String pathParent = _sqlDriver.inode2path(Long.parseLong(tempLabelId.substring(tempLabelId.lastIndexOf('-') + 1)), 0L);
+                    String result = tempLabelId.split("/")[1];
+                    String correctPath = pathParent + "/" + result;
+                    FsInode inode = _sqlDriver.path2inode(startFrom, correctPath.substring(0, correctPath.lastIndexOf('-'))
+                    );
+                    return inode;
+                } else {
+                    labelId = _sqlDriver.getLabel(
+                            path.substring("/.(collection)".length() + 1, path.length()));               }
+
+            } catch (NoLabelChimeraException e) {
+                throw FileNotFoundChimeraFsException.ofPath(path);
+            }
+            String pnfsIdSecond = "FFFF0000000000000000";
+            String tempId = String.format("%016x", labelId);
+            String pnfsID = pnfsIdSecond + tempId;
+            Stat stat = _sqlDriver.stat(pnfsID);
+
+            FsInode labelInode = new FsInode_LABEL(this, labelId, stat);
+            return labelInode;
+        }
         FsInode inode = _sqlDriver.path2inode(startFrom, path);
         if (inode == null) {
             throw FileNotFoundChimeraFsException.ofPath(path);
@@ -729,6 +779,7 @@ public class JdbcFs implements FileSystemProvider, LeaderLatchListener {
         fillIdCaches(inode);
         return inode;
     }
+
 
     @Override
     public String inode2id(FsInode inode) throws ChimeraFsException {
@@ -747,7 +798,6 @@ public class JdbcFs implements FileSystemProvider, LeaderLatchListener {
             throw new RuntimeException(e.getCause());
         }
     }
-
     @Override
     public FsInode id2inode(String id, StatCacheOption option) throws ChimeraFsException {
         if (option == NO_STAT) {
@@ -772,7 +822,13 @@ public class JdbcFs implements FileSystemProvider, LeaderLatchListener {
             }
             _inoCache.put(stat.getId(), stat.getIno());
             _idCache.put(stat.getIno(), stat.getId());
-            return new FsInode(this, stat.getIno(), FsInodeType.INODE, 0, stat);
+            if (id.startsWith("FFFF")) {
+                return new FsInode_LABEL(this, stat.getIno(), stat);
+            } else if (id.startsWith("FFFFF")) {
+                return new FsInode(this, stat.getIno(), FsInodeType.LABELS, 0, stat);
+            } else {
+                return new FsInode(this, stat.getIno(), FsInodeType.INODE, 0, stat);
+            }
         }
     }
 
@@ -796,6 +852,15 @@ public class JdbcFs implements FileSystemProvider, LeaderLatchListener {
     public FsInode inodeOf(FsInode parent, String name, StatCacheOption cacheOption)
           throws ChimeraFsException {
         // only if it's PNFS command
+        //TODO this should be checked there is inconsistency in unit test and system test
+        // not sure if this is correct, should be discussed
+        if (parent.type() == FsInodeType.LABELS) {
+            FsInode labelInode = new FsInode_LABEL(this, _sqlDriver.getLabel(name));
+            if (!labelInode.exists()) {
+                throw FileNotFoundChimeraFsException.ofFileInDirectory(parent, name);
+            }
+            return labelInode;
+        }
         if (name.startsWith(".(")) {
 
             if (name.startsWith(".(id)(")) {
@@ -868,17 +933,11 @@ public class JdbcFs implements FileSystemProvider, LeaderLatchListener {
                 return nameofInode;
             }
 
-            if (name.startsWith(".(collection)(")) {
-                String[] cmd = PnfsCommandProcessor.process(name);
-                if (cmd.length != 2) {
+            if (name.equals(".(collection)")) {
+                Stat stat = _sqlDriver.statLabelsParent();
+                FsInode labelInode = new FsInode_LABELS(this, 0, stat);
+                if (!labelInode.exists()) {
                     throw FileNotFoundChimeraFsException.ofFileInDirectory(parent, name);
-                }
-
-                FsInode labelInode = new FsInode_LABEL(this, _sqlDriver.getLabel(cmd[1]), cmd[1]);
-                if (!(labelInode.type() == FsInodeType.LABEL)) {
-                    if (!labelInode.exists()) {
-                        throw FileNotFoundChimeraFsException.ofFileInDirectory(parent, name);
-                    }
                 }
                 return labelInode;
             }
@@ -1313,6 +1372,11 @@ public class JdbcFs implements FileSystemProvider, LeaderLatchListener {
     }
 
     @Override
+    public Stat statLabelsParent(FsInode dir) throws ChimeraFsException {
+        return _sqlDriver.statLabelsParent();
+    }
+
+    @Override
     public void setTagOwner(FsInode_TAG tagInode, String name, int owner)
           throws ChimeraFsException {
         inTransaction(status -> {
@@ -1351,29 +1415,6 @@ public class JdbcFs implements FileSystemProvider, LeaderLatchListener {
     @Override
     public int getFsId() {
         return _fsId;
-    }
-
-    /*
-     * Storage Information
-     *
-     * currently it's not allowed to modify it
-     */
-    @Override
-    public void setStorageInfo(FsInode inode, InodeStorageInformation storageInfo)
-          throws ChimeraFsException {
-        inTransaction(status -> {
-            try {
-                _sqlDriver.setStorageInfo(inode, storageInfo);
-            } catch (ForeignKeyViolationException e) {
-                throw FileNotFoundChimeraFsException.of(inode, e);
-            }
-            return null;
-        });
-    }
-
-    @Override
-    public InodeStorageInformation getStorageInfo(FsInode inode) throws ChimeraFsException {
-        return _sqlDriver.getStorageInfo(inode);
     }
 
     /*
@@ -1511,6 +1552,7 @@ public class JdbcFs implements FileSystemProvider, LeaderLatchListener {
     @Override
     public void close() throws IOException {
         maintenanceTaskExecutor.shutdown();
+        _sqlDriver.close();
     }
 
     @Override
@@ -1570,11 +1612,14 @@ public class JdbcFs implements FileSystemProvider, LeaderLatchListener {
             return null;
         });
     }
-
-
     @Override
     public Set<String> getLabels(FsInode inode) throws ChimeraFsException {
         return inTransaction(status -> _sqlDriver.getLabels(inode));
+    }
+
+    @Override
+    public String getLabelById(long ino) throws ChimeraFsException {
+        return inTransaction(status -> _sqlDriver.getLabelById(ino));
     }
 
     @Override

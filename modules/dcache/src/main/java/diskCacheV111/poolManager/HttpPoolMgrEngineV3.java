@@ -65,6 +65,9 @@ public class HttpPoolMgrEngineV3 implements
     private static final Logger LOGGER =
           LoggerFactory.getLogger(HttpPoolMgrEngineV3.class);
 
+    // ROW_ODDNESS is used to alternate the row colors in the HTML table
+    private static final String[] ROW_ODDNESS = {"even", "odd"};
+
     private static final long TIMEOUT = 20000;
 
     private final Thread _restoreCollector;
@@ -97,7 +100,7 @@ public class HttpPoolMgrEngineV3 implements
     private final Object _updateLock = new Object();
     private boolean _addStorageInfo;
     private String[] _siDetails;
-    private String _cssFile = "/poolInfo/css/default.css";
+    private String _cssFile = "/styles/common.css";
     private Map<String, Object> _context;
 
     private CellEndpoint _endpoint;
@@ -330,7 +333,7 @@ public class HttpPoolMgrEngineV3 implements
                     "Path", "path"
               };
         pw.println("<form name=\"input\" action=\"" + action + "\" method=\"get\">");
-        pw.println("<center><table border=0 cellspacing=2 width=\"95%\" bgcolor=\"" + tableColor
+        pw.println("<center><table width=\"95%\" bgcolor=\"" + tableColor
               + "\">");
         pw.println("   <tr>");
         pw.println("      <td align=center bgcolor=\"" + tableDataColor + "\">");
@@ -361,6 +364,7 @@ public class HttpPoolMgrEngineV3 implements
 
     }
 
+    // FIXME: REMOVE!
     private void printCssFile(PrintWriter pw, String filename) {
         if (filename.equals("test.html")) {
             //
@@ -391,6 +395,7 @@ public class HttpPoolMgrEngineV3 implements
         }
     }
 
+    // FIXME: REMOVE!
     private void printInternalCssFile(PrintWriter pw) {
         pw.println("body { background-color:orange; }");
         pw.println(
@@ -532,6 +537,7 @@ public class HttpPoolMgrEngineV3 implements
             }
             pw.println("</ul>");
         } finally {
+            pw.println("</div>");
             pw.println("</body>");
             pw.println("</html>");
         }
@@ -544,8 +550,14 @@ public class HttpPoolMgrEngineV3 implements
         pw.println("<link rel=\"stylesheet\" type=\"text/css\" href=\"" + _cssFile + "\">");
         pw.println("</head>");
 
-        pw.println("<body class=\"m-body\">");
-
+        pw.println("<body>");
+        pw.println("<div id='header'>");
+        pw.println("<div id='bird_small'>");
+        pw.println("<a href='/'><img src='/images/dCache-logo.svg'></a>");
+        pw.println("<br/>Birds Home</div>");
+        pw.println("<div id ='bird_large'><img src='/images/eagle-grey.gif'></div>");
+        pw.println("</div>");
+        pw.println("<div id=\"main\">");
     }
 
     private void printConfigurationPages(PrintWriter pw, String[] urlItems, HttpRequest request)
@@ -607,8 +619,7 @@ public class HttpPoolMgrEngineV3 implements
         }
 
         pw.println("<hr><address>Created " + (new Date())
-              + " $Id: HttpPoolMgrEngineV3.java,v 1.26 2007-08-16 20:20:56 behrmann Exp $");
-        pw.println("</body></html>");
+              + " $Id: HttpPoolMgrEngineV3.java,v 1.26 2007-08-16 20:20:56 behrmann Exp $</address>");
     }
 
     private void printParameterInMatrix(PrintWriter pw, Map<String, Partition> parameterMap) {
@@ -633,7 +644,7 @@ public class HttpPoolMgrEngineV3 implements
             row++;
         }
 
-        pw.println("<center><table class=\"s-table\"");
+        pw.println("<center><table class=\"s-table\">");
 
         pw.print("<tr class=\"s-table\">");
         pw.print("<th class=\"s-table\">Key</th><th class=\"s-table\">Default</th>");
@@ -645,7 +656,6 @@ public class HttpPoolMgrEngineV3 implements
         Map<String, Object[]> defaultMap = new TreeMap<>(defaultParas.toMap());
         row = 0;
         String[] setColor = {"s-table-disabled", "s-table-regular"};
-        String[] rowClass = {"s-table-a", "s-table-b"};
 
         for (Map.Entry<String, Object[]> entry : defaultMap.entrySet()) {
             String key = entry.getKey();
@@ -656,10 +666,10 @@ public class HttpPoolMgrEngineV3 implements
             //
             // the keys
             //
-            pw.print("<tr class=\"" + rowClass[row % rowClass.length] + "\">");
-            pw.print("<th class=\"s-table\">");
+            pw.print("<tr class=\"" + ROW_ODDNESS[row % ROW_ODDNESS.length] + "\">");
+            pw.print("<td class=\"s-table\">");
             pw.print(key);
-            pw.print("</th>");
+            pw.print("</td>");
             //
             // default values
             //
@@ -701,7 +711,7 @@ public class HttpPoolMgrEngineV3 implements
         int column = 0;
         int maxColumn = 2;
 
-        pw.println("<center><table width=\"90%\" cellspacing=4 cellpadding=4 bgcolor=yellow>");
+        pw.println("<center><table id=\"params\">");
 
         pw.print("<tr>");
         for (int l = 0; l < (maxColumn + 1); l++) {
@@ -988,18 +998,11 @@ public class HttpPoolMgrEngineV3 implements
     }
 
     private void printPoolManagerHeader(PrintWriter pw, String title) {
-        pw.println("<table class=\"m-table\" border=0 cellpadding=10 cellspacing=0 width=\"90%\">");
-        pw.println("<tr><td align=center valign=center width=\"1%\">");
-        pw.println("<a href=\"/\"><img border=0 src=\"/images/eagleredtrans.gif\"></a>");
-        pw.println("<br><font color=red>Birds Home</font>");
-        pw.println("</td><td align=center>");
         if (title != null) {
             pw.println("<h1>" + title + "</h1>");
         } else {
             pw.println("<h1>Pool Manager Database V3</h1>");
         }
-        pw.println("</td></tr></table>");
-
     }
 
     private void showDirectory(PrintWriter pw) {
@@ -1105,7 +1108,7 @@ public class HttpPoolMgrEngineV3 implements
     }
 
     private void showList(PrintWriter pw, Object[] array, int rows, String link) {
-        pw.println("<table class=\"l-table\"");
+        pw.println("<table class=\"l-table\">");
         Arrays.sort(array);
         for (int i = 0; i < array.length; i++) {
             if ((i % rows) == 0) {
@@ -1238,7 +1241,7 @@ public class HttpPoolMgrEngineV3 implements
             boolean enabled = (Boolean) o[3];
             boolean rdOnly = (Boolean) o[5];
             long active = (Long) o[4];
-            pw.println("<table border=0 cellspacing=4 cellpadding=4>");
+            pw.println("<table id=\"pools\">");
             pw.print("<tr><th align=right>Enabled : </th><td align=left>");
             pw.print(enabled ? "Yes" : "No");
             pw.println("</td></tr>");
@@ -1274,7 +1277,7 @@ public class HttpPoolMgrEngineV3 implements
             String type = o[1].toString();
             Object[] groupList = (Object[]) o[2];
 
-            pw.println("<table border=0 cellspacing=4 cellpadding=4>");
+            pw.println("<table>");
             pw.print("<tr><th align=right>Selection Unit : </th><td align=left>");
             pw.print(unitName);
             pw.println("</td></tr>");
@@ -1361,14 +1364,13 @@ public class HttpPoolMgrEngineV3 implements
             pw.print("<th rowspan=2 class=\"s-table\">Pools</th>");
             pw.println("</tr>");
             pw.println("<tr class=\"s-table\">");
-            pw.print("<th class=\"s-table\">Read</th><th class=\"s-table\">Write</font></th>");
-            pw.print("<th class=\"s-table\">Cache</th><th class=\"s-table\">P2p</font></th>");
+            pw.print("<th class=\"s-table\">Read</th><th class=\"s-table\">Write</th>");
+            pw.print("<th class=\"s-table\">Cache</th><th class=\"s-table\">P2p</th>");
             pw.println("</tr>");
-            int row = 0;
-            String[] rowColor = {"s-table-a", "s-table-b"};
 
+            int row = 0;
             for (LinkProperties lp : list) {
-                pw.println("<tr class=\"" + rowColor[row % rowColor.length] + "\">");
+                pw.println("<tr class=\"" + ROW_ODDNESS[row % ROW_ODDNESS.length] + "\">");
                 printLinkPropertyRow(pw, lp);
                 pw.println("</tr>");
                 row++;
@@ -1526,7 +1528,7 @@ public class HttpPoolMgrEngineV3 implements
             Object[] unitList = (Object[]) o[1];
             Object[] linkList = (Object[]) o[2];
 
-            pw.println("<table border=0 cellspacing=4 cellpadding=4>");
+            pw.println("<table id=\"units\">");
             pw.print("<tr><th align=right>Unit Group : </th><td align=left>");
             pw.print(groupName);
             pw.println("</td></tr>");
@@ -1558,7 +1560,7 @@ public class HttpPoolMgrEngineV3 implements
             Object[] poolList = (Object[]) o[1];
             Object[] linkList = (Object[]) o[2];
 
-            pw.println("<table border=0 cellspacing=4 cellpadding=4>");
+            pw.println("<table id=\"pgroup\">");
             pw.print("<tr><th align=right>Pool Group : </th><td align=left>");
             pw.print(groupName);
             pw.println("</td></tr>");

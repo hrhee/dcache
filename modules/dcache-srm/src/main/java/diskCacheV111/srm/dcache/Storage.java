@@ -116,6 +116,7 @@ import diskCacheV111.util.NotDirCacheException;
 import diskCacheV111.util.PermissionDeniedCacheException;
 import diskCacheV111.util.PnfsHandler;
 import diskCacheV111.util.PnfsId;
+import diskCacheV111.util.QuotaExceededCacheException;
 import diskCacheV111.util.RetentionPolicy;
 import diskCacheV111.util.TimeoutCacheException;
 import diskCacheV111.vehicles.CopyManagerMessage;
@@ -151,6 +152,7 @@ import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -1166,6 +1168,8 @@ public final class Storage
             throw new SRMException(e.getMessage(), e);
         } catch (PermissionDeniedCacheException e) {
             throw new SRMAuthorizationException("Permission denied.", e);
+        } catch (QuotaExceededCacheException e) {
+            throw new SRMAuthorizationException("Quota exceeded.", e);
         } catch (FileExistsCacheException e) {
             throw new SRMDuplicationException(surl + " exists.", e);
         } catch (CacheException e) {
@@ -1784,7 +1788,7 @@ public final class Storage
                       remoteTURL.toString(), isVerifyRequired(extraInfo),
                       httpHeaders(extraInfo),
                       credential,
-                      Optional.empty());
+                      Collections.emptyList());
                 break;
 
             case "http":
@@ -1792,7 +1796,7 @@ public final class Storage
                       1, 1, remoteAddr,
                       remoteTURL.toString(), isVerifyRequired(extraInfo),
                       httpHeaders(extraInfo),
-                      Optional.empty());
+                      Collections.emptyList());
                 break;
 
             default:

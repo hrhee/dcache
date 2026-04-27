@@ -4,101 +4,65 @@
 <head>
 <title>dCache service</title>
 <meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1">
-<style type="text/css">
-h1
-{
-  font-style: italic;
-  margin-top: 0;
-}
-
-#quick h3
-{
-  font-style: italic;
-}
-
-h3
-{
-  color: white;
-}
-
-h3 a
-{
-  color: white;
-}
-</style>
+<link type='text/css' rel='stylesheet' href='/styles/common.css'>
 
 </head>
-<body background="/images/bg.svg" text="#000000" link="#000000" vlink="#000000" alink="#000000">
+<body id="index-page">
 <br/>
 <br/>
 <center>
-<h1 style="font-size:300%"><font color="#003399">dCache service</font></h1>
+<h1 style="font-size:300%"><font color="#403c38">dCache service</font></h1>
 </center>
+
 <center>
 <br/>
 <br/>
-<table  border="1" bgcolor="#003399" width="90%" cellspacing="1" cellpadding="4">
+<table  id="index-page-table" border="0">
   <tr id="quick">
-  <td colspan="2" bgcolor="#6699cc">
+  <td colspan="2">
      <h1>Quick Finder</h1>
-     <table border="0" width="100%" cellpadding="0">
+     <table id="index-container" border="0" width="100%">
      <tr>
-        <td width="25%" align="center">
+        <td width="25%" >
            <h3><a href="/cellInfo">Cell&nbsp;Services</a></h3>
         </td>
-        <td width="25%" align="center">
+        <td width="25%" >
            <h3><a href="/usageInfo">Pool&nbsp;Usage</a></h3>
         </td>
-        <td width="25%" align="center">
+        <td width="25%">
            <h3><a href="/poolInfo/restoreHandler/*">Tape&nbsp;Transfer&nbsp;Queue</a></h3>
         </td>
-        <td width="25%" align="center">
+        <td width="25%">
            <h3><a href="/poolInfo/restoreHandler/lazy">Detailed&nbsp;Tape&nbsp;Transfer&nbsp;Queue</a></h3>
         </td>
      </tr>
      <tr>
-        <td width="25%" align="center">
+        <td width="25%">
            <h3><a href="/queueInfo">Pool&nbsp;Transfer&nbsp;Queues</a></h3>
         </td>
-        <td width="25%" align="center">
+        <td width="25%">
            <h3><a href="/billing/">Action&nbsp;Log</a></h3>
         </td>
-        <td width="25%" align="center">
+        <td width="25%">
            <!--
            <h3><a href="/statistics/">Statistics</a></h3>
            -->
         </td>
-        <td width="25%" align="center">
+        <td width="25%">
            <!--
            <h3><a href="/history">History</a></h3>
            -->
            &nbsp;
         </td>
      </tr>
-     <tr>
-        <td colspan="4" width="25%" align="center">
-           <h3><a href="/poolInfo" style="color: yellow">Pool Selection Configuration</a></h3>
-        </td>
-        <!--
-        <td width="25%" align="center">
-           &nbsp;
-        </td>
-        <td width="25%" align="center">
-           &nbsp;
-        </td>
-        <td width="25%" align="center">
-           &nbsp;
-        </td>
-        -->
-     </tr>
      </table>
   </td>
   </tr>
   <tr>
-    <td align="left" bgcolor="#6699cc" valign="top">
+    <td valign="top">
         <h1>Status</h1>
         <blockquote>
-            <table cellpadding="10">
+            <table id="index-container">
                 <tr>
                     <td>
                         <h3><a href="/cellInfo">Cell&nbsp;Services</a></h3>
@@ -128,10 +92,10 @@ h3 a
         </blockquote>
     </td>
 
-    <td align="left" bgcolor="#6699cc" valign="top">
+    <td valign="top">
         <h1>Various Queues</h1>
         <blockquote>
-            <table border="0" cellpadding="10" width="100%">
+            <table id="index-container" border="0" width="100%">
                 <tr>
                     <td>
                         <h3><a href="/poolInfo/restoreHandler/*">Tape&nbsp;Transfer&nbsp;Queue</a></h3>
@@ -156,27 +120,16 @@ h3 a
                         List of active transfers.
                     </td>
                 </tr>
-                <tr>
-                    <td>
-                        <!--
-                        <h3><a href="/context/QueueHistograms.html">Queue&nbsp;Histograms</a></h3>
-                        -->
-                        <h3>Queue&nbsp;Histograms</h3>
-                    </td>
-                    <td>
-                         Transfer and Tape Restore histograms (<span style="color: red">Module not installed</span>)
-                    </td>
-                </tr>
             </table>
         </blockquote>
     </td>
 
   </tr><tr>
 
-    <td align="left" bgcolor="#6699cc" valign="top">
+    <td valign="top">
         <h1>Statistics <span style="color:red">Module not installed</span></h1>
         <blockquote>
-            <table border="0" cellpadding="10">
+            <table id="index-container" border="0">
                 <tr>
                     <td>
                         <h3><a href="/statistics/">Statistics</a></h3>
@@ -190,10 +143,10 @@ h3 a
     </td>
 
 
-    <td align="left" bgcolor="#6699cc" valign="top">
+    <td valign="top">
         <h1>Configuration/Setup</h1>
         <blockquote>
-            <table border="0" cellpadding="10">
+            <table id="index-container" border="0">
                 <tr>
                     <td>
                         <h3><a href="/poolInfo">Pool&nbsp;Selection&nbsp;Setup</a></h3>
@@ -208,30 +161,16 @@ h3 a
 
 </tr>
 <tr>
-   <td bgcolor="#990033" colspan="2">
-      <h1>News</h1>
+   <td bgcolor="#EEEDEB" colspan="2">
       <blockquote>
-          <h3>Scheduled downtimes</h3>
-          <blockquote style="color:yellow">
-            Nothing planned yet.
-         </blockquote>
+          <h3><a href="https://dcache.org/documentation/" style="color: black">dCache, the Book</a></h3>
       </blockquote>
-
-   </td>
-</tr>
-<tr>
-   <td bgcolor="#ffffff" colspan="2">
-      <h1>dCache documentation</h1>
-      <blockquote>
-          <h3><a href="http://www.dcache.org/manuals/Book" style="color: black">dCache, the Book</a></h3>
-      </blockquote>
-
    </td>
 </tr>
 </table>
 </center>
 <br/><br/><br/>
 <hr/>
-<address><a href="http://www.dcache.org">&copy; dCache.ORG</a>www.dCache.org</address>
+<address><a href="https://dcache.org">&copy; dCache.ORG</a>www.dCache.org</address>
 </body>
 </html>

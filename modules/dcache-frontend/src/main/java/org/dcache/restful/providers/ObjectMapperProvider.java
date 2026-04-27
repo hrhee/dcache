@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.Module;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.module.SimpleModule;
+import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import javax.ws.rs.ext.ContextResolver;
 import javax.ws.rs.ext.Provider;
 
@@ -24,14 +25,13 @@ public class ObjectMapperProvider implements ContextResolver<ObjectMapper> {
         return new ObjectMapper()
               .registerModule(PNFSID_SERIALIZER)
               .enable(DeserializationFeature.UNWRAP_ROOT_VALUE)
-              .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
-              .setSerializationInclusion(JsonInclude.Include.NON_NULL)
-              .setSerializationInclusion(JsonInclude.Include.NON_DEFAULT);
+              .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
     }
 
     private static ObjectMapper createDefaultMapper() {
         return new ObjectMapper()
               .registerModule(PNFSID_SERIALIZER)
+              .registerModule(new Jdk8Module())
               .enable(SerializationFeature.INDENT_OUTPUT)
               .setSerializationInclusion(JsonInclude.Include.NON_NULL);
     }

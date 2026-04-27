@@ -1,5 +1,6 @@
 package org.dcache.xrootd.door;
 
+import static com.google.common.net.InetAddresses.toUriString;
 import static java.util.Objects.requireNonNull;
 
 import diskCacheV111.util.FsPath;
@@ -20,8 +21,13 @@ import org.dcache.vehicles.XrootdProtocolInfo;
 import org.dcache.xrootd.protocol.XrootdProtocol;
 import org.dcache.xrootd.tpc.XrootdTpcInfo;
 import org.dcache.xrootd.util.ParseException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class XrootdTransfer extends RedirectedTransfer<InetSocketAddress> {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(XrootdTransfer.class);
+    private static final Logger SCITAGS_LOGGER = LoggerFactory.getLogger("org.dcache.scitags");
 
     private UUID _uuid;
     private InetSocketAddress _doorAddress;
@@ -31,12 +37,14 @@ public class XrootdTransfer extends RedirectedTransfer<InetSocketAddress> {
     private boolean proxiedTransfer;
     private final XrootdTpcInfo tpcInfo;
     private final Restriction restriction;
+    private String _transferTag;
 
     public XrootdTransfer(PnfsHandler pnfs, Subject subject,
-          Restriction restriction, FsPath path, Map<String, String> opaque) throws ParseException {
+            Restriction restriction, FsPath path, Map<String, String> opaque) throws ParseException {
         super(pnfs, subject, restriction, path);
         this.restriction = requireNonNull(restriction);
         tpcInfo = new XrootdTpcInfo(opaque);
+        _transferTag = opaque.getOrDefault("scitag.flow", "");
         try {
             tpcInfo.setUid(Subjects.getUid(subject));
         } catch (NoSuchElementException e) {
@@ -81,6 +89,31 @@ public class XrootdTransfer extends RedirectedTransfer<InetSocketAddress> {
         return createXrootdProtocolInfo();
     }
 
+    void logSciTagsRequest(Map<String, String> opaque) {
+        if (SCITAGS_LOGGER.isDebugEnabled()) {
+            String tagSource = !_transferTag.isEmpty()
+                  ? "scitag.flow"
+                  : opaque.containsKey("scitag.flow") ? "scitag.flow-empty" : "none";
+            SCITAGS_LOGGER.debug(
+                  "scitags event=request protocol=xrootd door={} remote={} tagSource={} transferTag={}",
+                  getCellName() + '@' + getDomainName(),
+                  formatAddress(getClientAddress()),
+                  tagSource,
+                  _transferTag.isEmpty() ? "-" : _transferTag);
+        }
+    }
+
+    private String formatAddress(InetSocketAddress address) {
+        if (address == null) {
+            return "-";
+        }
+
+        var inetAddress = address.getAddress();
+        return inetAddress == null
+              ? address.getHostString()
+              : toUriString(inetAddress);
+    }
+
     @Override
     protected ProtocolInfo getProtocolInfoForPoolManager() {
         ProtocolInfo info = createProtocolInfo();
@@ -109,15 +142,22 @@ public class XrootdTransfer extends RedirectedTransfer<InetSocketAddress> {
     }
 
     private XrootdProtocolInfo createXrootdProtocolInfo() {
-        return new XrootdProtocolInfo(XrootdDoor.XROOTD_PROTOCOL_STRING,
-              XrootdProtocol.PROTOCOL_VERSION_MAJOR,
-              XrootdProtocol.PROTOCOL_VERSION_MINOR,
-              getClientAddress(),
-              new CellPath(getCellName(), getDomainName()),
-              getPnfsId(),
-              _fileHandle,
-              _uuid,
-              _doorAddress);
+        XrootdProtocolInfo protocolInfo = new XrootdProtocolInfo(XrootdDoor.XROOTD_PROTOCOL_STRING,
+                XrootdProtocol.PROTOCOL_VERSION_MAJOR,
+                XrootdProtocol.PROTOCOL_VERSION_MINOR,
+                getClientAddress(),
+                new CellPath(getCellName(), getDomainName()),
+                getPnfsId(),
+                _fileHandle,
+                _uuid,
+                _doorAddress);
+
+        protocolInfo.setTransferTag(_transferTag);
+        if (LOGGER.isDebugEnabled()) {
+            LOGGER.debug("XrootdProtocolInfo created with transferTag='{}' for pnfs={}",
+                  _transferTag, getPnfsId());
+        }
+        return protocolInfo;
     }
 
     @Override

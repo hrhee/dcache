@@ -20,6 +20,11 @@ import static org.dcache.boot.Properties.PROPERTY_ZOOKEPER_SESSION_TIMEOUT;
 import static org.dcache.boot.Properties.PROPERTY_ZOOKEPER_SESSION_TIMEOUT_UNIT;
 import static org.dcache.boot.Properties.PROPERTY_ZOOKEPER_SLEEP;
 import static org.dcache.boot.Properties.PROPERTY_ZOOKEPER_SLEEP_UNIT;
+import static org.dcache.boot.Properties.PROPERTY_ZOOKEEPER_KEYSTORE_PASSWORD;
+import static org.dcache.boot.Properties.PROPERTY_ZOOKEEPER_KEYSTORE_PATH;
+import static org.dcache.boot.Properties.PROPERTY_ZOOKEEPER_TLS_ENABLED;
+import static org.dcache.boot.Properties.PROPERTY_ZOOKEEPER_TRUSTSTORE_PASSWORD;
+import static org.dcache.boot.Properties.PROPERTY_ZOOKEEPER_TRUSTSTORE_PATH;
 import static org.dcache.util.Exceptions.genericCheck;
 
 import ch.qos.logback.classic.LoggerContext;
@@ -51,6 +56,7 @@ import org.apache.curator.RetryPolicy;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.CuratorFrameworkFactory;
 import org.apache.curator.retry.ExponentialBackoffRetry;
+import org.apache.zookeeper.client.ZKClientConfig;
 import org.dcache.util.Args;
 import org.dcache.util.configuration.ConfigurationProperties;
 import org.slf4j.Logger;
@@ -172,6 +178,7 @@ public class Domain {
     protected CuratorFramework createCuratorFramework() {
         int maxRetries = Integer.parseInt(_properties.getValue(PROPERTY_ZOOKEPER_RETRIES));
         String zookeeperConnectionString = _properties.getValue(PROPERTY_ZOOKEPER_CONNECTION);
+        boolean tlsEnabled = Boolean.parseBoolean(_properties.getValue(PROPERTY_ZOOKEEPER_TLS_ENABLED));
         int baseSleepTimeMs =
               getTime(PROPERTY_ZOOKEPER_SLEEP, PROPERTY_ZOOKEPER_SLEEP_UNIT);
         int connectionTimeoutMs =
@@ -180,9 +187,31 @@ public class Domain {
         int sessionTimeoutMs =
               getTime(PROPERTY_ZOOKEPER_SESSION_TIMEOUT, PROPERTY_ZOOKEPER_SESSION_TIMEOUT_UNIT);
         RetryPolicy retryPolicy = new ExponentialBackoffRetry(baseSleepTimeMs, maxRetries);
-        CuratorFramework curator = CuratorFrameworkFactory.newClient(zookeeperConnectionString,
-              sessionTimeoutMs, connectionTimeoutMs,
-              retryPolicy);
+        CuratorFramework curator;
+
+        if (tlsEnabled) {
+            String keyStorePath = _properties.getValue(PROPERTY_ZOOKEEPER_KEYSTORE_PATH);
+            String keyStorePassword = _properties.getValue(PROPERTY_ZOOKEEPER_KEYSTORE_PASSWORD);
+            String trustStorePath = _properties.getValue(PROPERTY_ZOOKEEPER_TRUSTSTORE_PATH);
+            String trustStorePassword = _properties.getValue(PROPERTY_ZOOKEEPER_TRUSTSTORE_PASSWORD);
+            if (keyStorePath == null
+                    || keyStorePassword == null
+                    || trustStorePath == null
+                    || trustStorePassword == null) {
+                throw new IllegalStateException(
+                        "TLS for ZooKeeper is enabled but keystore/truststore properties are not fully configured"
+                );
+            }
+
+            ZKClientConfig zkConfig = getZkClientConfig(keyStorePath,
+                    keyStorePassword, trustStorePath, trustStorePassword);
+
+            curator = CuratorFrameworkFactory.newClient(zookeeperConnectionString,
+                    sessionTimeoutMs, connectionTimeoutMs, retryPolicy, zkConfig);
+        } else {
+            curator = CuratorFrameworkFactory.newClient(zookeeperConnectionString,
+                  sessionTimeoutMs, connectionTimeoutMs, retryPolicy);
+        }
 
         curator.getConnectionStateListenable().addListener((c, s) ->
               EVENT_LOGGER.info("[CURATOR: {}] connection state now {}",
@@ -198,6 +227,20 @@ public class Domain {
               EVENT_LOGGER.warn("[CURATOR: {}] unhandled error \"{}\": {}",
                     curator.getState(), m, e.getMessage()));
         return curator;
+    }
+
+    protected ZKClientConfig getZkClientConfig(String keyStorePath, String keyStorePassword,
+                                               String trustStorePath, String trustStorePassword) {
+        ZKClientConfig zkConfig = new ZKClientConfig();
+        zkConfig.setProperty(ZKClientConfig.SECURE_CLIENT, "true");
+        zkConfig.setProperty(ZKClientConfig.ZOOKEEPER_CLIENT_CNXN_SOCKET,
+                "org.apache.zookeeper.ClientCnxnSocketNetty");
+        zkConfig.setProperty("zookeeper.ssl.keyStore.location", keyStorePath);
+        zkConfig.setProperty("zookeeper.ssl.keyStore.password", keyStorePassword);
+        zkConfig.setProperty("zookeeper.ssl.trustStore.location", trustStorePath);
+        zkConfig.setProperty("zookeeper.ssl.trustStore.password", trustStorePassword);
+        zkConfig.setProperty("zookeeper.ssl.protocol", "TLSv1.3");
+        return zkConfig;
     }
 
     private int getTime(String baseProperty, String unitProperty) {

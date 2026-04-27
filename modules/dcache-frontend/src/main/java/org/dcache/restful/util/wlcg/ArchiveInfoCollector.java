@@ -60,10 +60,12 @@ documents or software obtained from this server.
 package org.dcache.restful.util.wlcg;
 
 import static com.google.common.util.concurrent.Uninterruptibles.getUninterruptibly;
+import static org.dcache.namespace.FileType.REGULAR;
 
 import com.google.common.base.Throwables;
 import diskCacheV111.util.CacheException;
 import diskCacheV111.util.FileLocality;
+import diskCacheV111.util.FsPath;
 import diskCacheV111.util.PnfsHandler;
 import dmg.cells.nucleus.CellCommandListener;
 import dmg.util.command.Argument;
@@ -79,7 +81,6 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
-import org.dcache.acl.enums.AccessMask;
 import org.dcache.namespace.FileAttribute;
 import org.dcache.poolmanager.PoolMonitor;
 import org.dcache.restful.providers.tape.ArchiveInfo;
@@ -93,7 +94,6 @@ public class ArchiveInfoCollector implements CellCommandListener {
     private static final Set<FileAttribute> REQUIRED_ATTRIBUTES
           = EnumSet.of(FileAttribute.TYPE, FileAttribute.SIZE, FileAttribute.STORAGEINFO,
           FileAttribute.LOCATIONS);
-    private static final Set<AccessMask> ACCESS_MASK = EnumSet.of(AccessMask.READ_DATA);
     private static final int MAX_PATHS_DEFAULT = 10_000;
 
     private static final Logger LOGGER = LoggerFactory.getLogger(ArchiveInfoCollector.class);
@@ -117,12 +117,12 @@ public class ArchiveInfoCollector implements CellCommandListener {
     private ExecutorService service;
     private int maxPaths;
 
-    public List<ArchiveInfo> getInfo(PnfsHandler pnfsHandler, List<String> paths) {
+    public List<ArchiveInfo> getInfo(PnfsHandler pnfsHandler, String prefix, List<String> paths) {
         Map<String, Future<FileLocality>> futures = new HashMap<>();
         List<ArchiveInfo> infoList = new ArrayList<>();
 
         for (String path : paths) {
-            futures.put(path, service.submit(() -> getInfo(path, pnfsHandler)));
+            futures.put(path, service.submit(() -> getInfo(path, prefix, pnfsHandler)));
         }
 
         for (Entry<String, Future<FileLocality>> future : futures.entrySet()) {
@@ -162,9 +162,32 @@ public class ArchiveInfoCollector implements CellCommandListener {
         this.service = service;
     }
 
-    private FileLocality getInfo(String path, PnfsHandler pnfsHandler) throws CacheException {
-        FileAttributes attributes = pnfsHandler.getFileAttributes(path, REQUIRED_ATTRIBUTES,
-              ACCESS_MASK, false);
-        return poolMonitor.getFileLocality(attributes, "localhost");
+    private FileLocality getInfo(String path, String prefix, PnfsHandler pnfsHandler) throws CacheException {
+        String absolutePath = computeFsPath(prefix, path).toString();
+        FileAttributes attributes = pnfsHandler.getFileAttributes(absolutePath, REQUIRED_ATTRIBUTES);
+        FileLocality locality = poolMonitor.getFileLocality(attributes, "localhost");
+        /**
+         * This is done to placate CERN FTS that refuses
+         * to remove incomplete files if their locality is not ONLINE
+         */
+        if (attributes.getFileType() == REGULAR && locality == FileLocality.NONE) {
+            if (!attributes.isDefined(FileAttribute.SIZE) || attributes.getSize() == 0) {
+                locality = FileLocality.ONLINE;
+            }
+        }
+        return locality;
     }
+
+    public static FsPath computeFsPath(String prefix, String target) {
+        FsPath absolutePath = FsPath.create(FsPath.ROOT + target);
+        if (prefix != null) {
+            FsPath pref = FsPath.create(prefix);
+            if (!absolutePath.hasPrefix(pref)) {
+                absolutePath = FsPath.create(
+                                             FsPath.ROOT + (prefix.endsWith("/") ? prefix : prefix + "/") + target);
+            }
+        }
+        return absolutePath;
+    }
+
 }

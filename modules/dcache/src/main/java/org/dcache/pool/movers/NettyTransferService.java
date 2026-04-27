@@ -1,6 +1,6 @@
 /* dCache - http://www.dcache.org/
  *
- * Copyright (C) 2013 - 2024 Deutsches Elektronen-Synchrotron
+ * Copyright (C) 2013 - 2025 Deutsches Elektronen-Synchrotron
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -91,7 +91,7 @@ import javax.annotation.PreDestroy;
  * the Netty channel to close.
  */
 public abstract class NettyTransferService<P extends ProtocolInfo>
-      implements TransferService<NettyMover<P>>, MoverFactory, CellIdentityAware, CellInfoProvider {
+      implements TransferService<NettyMover<P>>, CellIdentityAware, CellInfoProvider {
 
     private static final Logger LOGGER =
           LoggerFactory.getLogger(NettyTransferService.class);
@@ -172,6 +172,8 @@ public abstract class NettyTransferService<P extends ProtocolInfo>
 
     private final List<io.netty.util.concurrent.Future<?>> shutdownFutures = new ArrayList<>();
 
+    private TransferLifeCycle transferLifeCycle;
+
     public NettyTransferService(String name) {
         this.name = name;
     }
@@ -218,6 +220,14 @@ public abstract class NettyTransferService<P extends ProtocolInfo>
     @Required
     public void setPortRange(NettyPortRange portRange) {
         this.portRange = portRange;
+    }
+
+    public void setTransferLifeCycle(TransferLifeCycle transferLifeCycle) {
+        this.transferLifeCycle = transferLifeCycle;
+    }
+
+    public TransferLifeCycle getTransferLifeCycle() {
+        return transferLifeCycle;
     }
 
     public NettyPortRange getPortRange() {
@@ -372,6 +382,9 @@ public abstract class NettyTransferService<P extends ProtocolInfo>
 
                 InetSocketAddress localEndpoint = new InetSocketAddress(localIP, getServerAddress().getPort());
                 mover.setLocalEndpoint(localEndpoint);
+                transferLifeCycle.onStart(((IpProtocolInfo)mover.getProtocolInfo()).getSocketAddress(),
+                        localEndpoint, mover.getProtocolInfo(), mover.getSubject());
+
                 sendAddressToDoor(mover, localEndpoint);
             }
 

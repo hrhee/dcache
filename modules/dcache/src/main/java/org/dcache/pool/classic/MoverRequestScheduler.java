@@ -12,6 +12,7 @@ import static org.dcache.pool.classic.IoRequestState.RUNNING;
 import diskCacheV111.pools.PoolCostInfo.NamedPoolQueueInfo;
 import diskCacheV111.util.CacheException;
 import diskCacheV111.util.DiskErrorCacheException;
+import diskCacheV111.util.PnfsId;
 import diskCacheV111.vehicles.IoJobInfo;
 import diskCacheV111.vehicles.JobInfo;
 import diskCacheV111.vehicles.ProtocolInfo;
@@ -41,6 +42,7 @@ import org.dcache.pool.FaultListener;
 import org.dcache.pool.movers.Mover;
 import org.dcache.pool.movers.json.MoverData;
 import org.dcache.pool.repository.FileStore;
+import org.dcache.pool.repository.OutOfDiskException;
 import org.dcache.util.AdjustableSemaphore;
 import org.dcache.util.IoPrioritizable;
 import org.dcache.util.IoPriority;
@@ -54,6 +56,13 @@ public class MoverRequestScheduler {
 
     private static final long DEFAULT_LAST_ACCESSED = 0;
     private static final long DEFAULT_TOTAL = 0;
+
+    public long numberOfRequestsFor(PnfsId pnfsId) {
+        return _jobs.values().stream()
+              .filter((pr) -> pr.getMover().getFileAttributes().getPnfsId().equals(pnfsId))
+              .filter((pr) -> !pr.getMover().isPoolToPoolTransfer())
+              .count();
+    }
 
     /**
      * A RuntimeException that wraps a CacheException.
@@ -183,8 +192,9 @@ public class MoverRequestScheduler {
     }
 
     /**
-     * Get mover id for given door request. If there is no mover associated with {@code
-     * doorUniqueueRequest} a new mover will be created by using provided {@code moverSupplier}.
+     * Get mover id for given door request. If there is no mover associated with
+     * {@code doorUniqueueRequest} a new mover will be created by using provided
+     * {@code moverSupplier}.
      * <p>
      * The returned mover id generated with following encoding: | 31- queue id -24|23- job id -0|
      *
@@ -513,9 +523,28 @@ public class MoverRequestScheduler {
                                     .setTransferStatus(CacheException.DEFAULT_ERROR_CODE,
                                           "Transfer was killed");
                           } else if (exc instanceof DiskErrorCacheException) {
+                              FaultAction faultAction = null;
+                              //TODO this is done because the FileStoreState is in another module
+                              // to be improved
+                              switch (((DiskErrorCacheException) exc).checkStatus(
+                                    exc.getMessage())) {
+                                  case READ_ONLY:
+                                      faultAction = FaultAction.READONLY;
+                                      break;
+                                  default:
+                                      faultAction = FaultAction.DISABLED;
+                                      break;
+                              }
                               FaultEvent faultEvent = new FaultEvent("transfer",
-                                    FaultAction.DISABLED, exc.getMessage(), exc);
+                                    faultAction, exc.getMessage(), exc);
                               _faultListeners.forEach(l -> l.faultOccurred(faultEvent));
+                          } else if (exc instanceof OutOfDiskException) {
+                              FaultEvent faultEvent = new FaultEvent(
+                                    "post-processing",
+                                    FaultAction.READONLY,
+                                    exc.getMessage(), exc);
+                              _faultListeners.forEach(
+                                    l -> l.faultOccurred(faultEvent));
                           }
                           postprocess();
                       }
@@ -532,9 +561,26 @@ public class MoverRequestScheduler {
                                         @Override
                                         public void failed(Throwable exc, Void attachment) {
                                             if (exc instanceof DiskErrorCacheException) {
+                                                FaultAction faultAction = null;
+                                                switch (((DiskErrorCacheException) exc).checkStatus(
+                                                      exc.getMessage())) {
+                                                    case READ_ONLY:
+                                                        faultAction = FaultAction.READONLY;
+                                                        break;
+                                                    default:
+                                                        faultAction = FaultAction.DISABLED;
+                                                        break;
+                                                }
                                                 FaultEvent faultEvent = new FaultEvent(
                                                       "post-processing",
-                                                      FaultAction.DISABLED,
+                                                      faultAction,
+                                                      exc.getMessage(), exc);
+                                                _faultListeners.forEach(
+                                                      l -> l.faultOccurred(faultEvent));
+                                            } else if (exc instanceof OutOfDiskException) {
+                                                FaultEvent faultEvent = new FaultEvent(
+                                                      "post-processing",
+                                                      FaultAction.READONLY,
                                                       exc.getMessage(), exc);
                                                 _faultListeners.forEach(
                                                       l -> l.faultOccurred(faultEvent));

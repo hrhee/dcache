@@ -38,12 +38,14 @@ import io.milton.servlet.ServletRequest;
 import io.milton.servlet.ServletResponse;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
 import java.security.AccessController;
 import java.security.cert.X509Certificate;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -101,6 +103,8 @@ public class CopyFilter implements Filter {
 
     private static final String QUERY_KEY_ASKED_TO_DELEGATE = "asked-to-delegate";
     private static final String REQUEST_HEADER_CREDENTIAL = "Credential";
+    private static final String REQUEST_HEADER_SCITAG = "SciTag";
+    private static final String REQUEST_HEADER_TRANSFER_HEADER_SCITAG = "TransferHeaderSciTag";
     private static final String REQUEST_HEADER_TRANSFER_HEADER_PREFIX = "transferheader";
     private static final String REQUEST_HEADER_VERIFICATION = "RequireChecksumVerification";
     private static final String TPC_ERROR_ATTRIBUTE = "org.dcache.tpc-error";
@@ -108,6 +112,11 @@ public class CopyFilter implements Filter {
     private static final String TPC_REQUIRE_CHECKSUM_VERIFICATION_ATTRIBUTE = "org.dcache.tpc-require-checksum-verify";
     private static final String TPC_SOURCE_ATTRIBUTE = "org.dcache.tpc-source";
     private static final String TPC_DESTINATION_ATTRIBUTE = "org.dcache.tpc-destination";
+    private static final String TPC_SCITAG_ATTRIBUTE = "org.dcache.tpc-scitag";
+    private static final String TPC_TRANSFER_HEADER_SCITAG_ATTRIBUTE =
+          "org.dcache.tpc-transferheaderscitag";
+    // Sentinel for a missing or blank SciTag-related header value.
+    private static final String MISSING_HEADER_VALUE = "-";
 
 
     private ImmutableMap<String, String> _clientIds;
@@ -182,12 +191,32 @@ public class CopyFilter implements Filter {
         return (String) request.getAttribute(TPC_REQUIRE_CHECKSUM_VERIFICATION_ATTRIBUTE);
     }
 
+    /**
+     * Provide the remote source URI for pull-type third-party copies.
+     */
     public static URI getTpcSource(HttpServletRequest request) {
         return (URI) request.getAttribute(TPC_SOURCE_ATTRIBUTE);
     }
 
+    /**
+     * Provide the remote destination URI for push-type third-party copies.
+     */
     public static URI getTpcDestination(HttpServletRequest request) {
         return (URI) request.getAttribute(TPC_DESTINATION_ATTRIBUTE);
+    }
+
+    /**
+     * Provide the SciTag header value supplied directly by the client.
+     */
+    public static String getTpcSciTag(HttpServletRequest request) {
+        return (String) request.getAttribute(TPC_SCITAG_ATTRIBUTE);
+    }
+
+    /**
+     * Provide the transfer-header-carried SciTag value supplied by the client.
+     */
+    public static String getTpcTransferHeaderSciTag(HttpServletRequest request) {
+        return (String) request.getAttribute(TPC_TRANSFER_HEADER_SCITAG_ATTRIBUTE);
     }
 
     @Required
@@ -268,7 +297,7 @@ public class CopyFilter implements Filter {
     }
 
     @Override
-    public void process(FilterChain chain, Request request, Response response) {
+    public void process(FilterChain chain, Request request, Response response ) {
         try {
             if (isRequestThirdPartyCopy(request)) {
                 processThirdPartyCopy(request, response);
@@ -276,8 +305,28 @@ public class CopyFilter implements Filter {
                 chain.process(request, response);
             }
         } catch (ErrorResponseException e) {
-            ServletResponse.getResponse().setStatus(e.getStatus().code,
-                  e.getMessage());
+            var r = ServletResponse.getResponse();
+            int code = e.getStatus().code;
+            r.setStatus(code, e.getMessage());
+            if (code == 507) {
+                /**
+                 * https://www.rfc-editor.org/rfc/rfc4331.html#section-6
+                 * stipulates that insufficient storage response error
+                 * must be accompanied by the following error response:
+                 */
+                r.setContentType("application/xml");
+                r.setCharacterEncoding("UTF-8");
+                var body = "<?xml version=\"1.0\">\n<error xmlns=\"DAV:\">\n<quota-not-exceeded/>\n</error>\n";
+                int len = StandardCharsets.UTF_8.encode(body).limit();
+                r.setContentLength(len);
+                try {
+                    var out = r.getWriter();
+                    out.write(body);
+                } catch (IOException ioe) {
+                    LOGGER.warn("Failed to write error response body: {}",
+                                ioe.toString());
+                }
+            }
         } catch (BadRequestException e) {
             ServletResponse.getResponse().setStatus(HttpServletResponse.SC_BAD_REQUEST,
                   e.getMessage());
@@ -382,6 +431,9 @@ public class CopyFilter implements Filter {
           throws BadRequestException, InterruptedException, ErrorResponseException {
         Direction direction = getDirection();
         URI remote = getRemoteLocation();
+        HttpServletRequest servletRequest = ServletRequest.getRequest();
+
+        captureSciTagHeaders(servletRequest);
 
         setRemoteUrlAttribute(direction, remote);
 
@@ -412,12 +464,12 @@ public class CopyFilter implements Filter {
 
         var transferHeaders = buildTransferHeaders(request);
         var transferFlags = buildTransferFlags();
+          String transferTag = transferTagForPool(servletRequest);
 
         var transferResult = _remoteTransfers.acceptRequest(transferHeaders,
               getSubject(), getRestriction(), path, remote, credential,
-              direction, transferFlags, overwriteAllowed, wantDigest);
+              transferTag, direction, transferFlags, overwriteAllowed, wantDigest);
 
-        HttpServletRequest servletRequest = ServletRequest.getRequest();
         transferResult.addListener(() -> {
             try {
                 var error = transferResult.get();
@@ -427,6 +479,36 @@ public class CopyFilter implements Filter {
                       "problem getting result: " + e);
             }
         }, MoreExecutors.directExecutor());
+    }
+
+    private void captureSciTagHeaders(HttpServletRequest request) {
+        request.setAttribute(TPC_SCITAG_ATTRIBUTE,
+              sanitiseHeaderValue(request.getHeader(REQUEST_HEADER_SCITAG)));
+        request.setAttribute(TPC_TRANSFER_HEADER_SCITAG_ATTRIBUTE,
+              sanitiseHeaderValue(request.getHeader(REQUEST_HEADER_TRANSFER_HEADER_SCITAG)));
+    }
+
+    private String sanitiseHeaderValue(String value) {
+        if (value == null) {
+            return MISSING_HEADER_VALUE;
+        }
+
+        String trimmedValue = value.trim();
+        return trimmedValue.isEmpty() ? MISSING_HEADER_VALUE : trimmedValue;
+    }
+
+    private String transferTagForPool(HttpServletRequest request) {
+        String sciTag = getTpcSciTag(request);
+        if (sciTag != null && !MISSING_HEADER_VALUE.equals(sciTag)) {
+            return sciTag;
+        }
+
+        String transferHeaderSciTag = getTpcTransferHeaderSciTag(request);
+        if (transferHeaderSciTag != null && !MISSING_HEADER_VALUE.equals(transferHeaderSciTag)) {
+            return transferHeaderSciTag;
+        }
+
+        return "";
     }
 
     private void setRemoteUrlAttribute(Direction direction, URI remote) {

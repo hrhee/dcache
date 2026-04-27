@@ -1,6 +1,6 @@
 /* dCache - http://www.dcache.org/
  *
- * Copyright (C) 2014 - 2023 Deutsches Elektronen-Synchrotron
+ * Copyright (C) 2014 - 2024 Deutsches Elektronen-Synchrotron
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -187,7 +187,6 @@ public class NearlineStorageHandler
     private OptionalLong flushTimeout = OptionalLong.empty();
     private OptionalLong removeTimeout = OptionalLong.empty();
     private ScheduledFuture<?> timeoutFuture;
-    private boolean _addFromNearlineStorage;
     private TimeUnit stickyOnStageDurationUnit;
     private long stickyOnStageDuration;
 
@@ -217,7 +216,6 @@ public class NearlineStorageHandler
     @Qualifier("hsm")
     public void setKafkaTemplate(KafkaTemplate kafkaTemplate) {
         _kafkaSender = kafkaTemplate::sendDefault;
-        _addFromNearlineStorage = true;
     }
 
     @Required
@@ -497,13 +495,11 @@ public class NearlineStorageHandler
     }
 
     private void addFromNearlineStorage(StorageInfoMessage message, NearlineStorage storage) {
-        if (_addFromNearlineStorage) {
             HsmDescription description = hsmSet.describe(storage);
 
             message.setHsmInstance(description.getInstance());
             message.setHsmType(description.getType());
             message.setHsmProvider(description.getProvider());
-        }
     }
 
     /**
@@ -519,7 +515,7 @@ public class NearlineStorageHandler
      */
     private abstract static class AbstractRequest<K> implements Comparable<AbstractRequest<K>> {
 
-        protected enum State {QUEUED, ACTIVE, CANCELED}
+        protected enum State {QUEUED, ACTIVE, CANCELED, REMOVED}
 
         private final List<CompletionHandler<Void, K>> callbacks = new ArrayList<>();
         protected final long createdAt = System.currentTimeMillis();
@@ -606,6 +602,12 @@ public class NearlineStorageHandler
                         task.cancel(false);
                     }
                 }
+            } else {
+                /*
+                 Request already canceled, but if attempted again, probably ignored by HSM, so remind it.
+                 Assume that canceling is idempotent.
+                 */
+                storage.cancel(uuid);
             }
         }
 
@@ -644,7 +646,7 @@ public class NearlineStorageHandler
         }
 
         public void removeFromQueue() {
-            State currentState = state.get();
+            State currentState = state.getAndSet(State.REMOVED);
             switch (currentState) {
                 case QUEUED:
                     decQueued();
@@ -654,6 +656,9 @@ public class NearlineStorageHandler
                     break;
                 case CANCELED:
                     decCanceled();
+                    break;
+                case REMOVED:
+                    LOGGER.warn("Request {} was already removed from the queue.", this);
                     break;
                 default:
                     throw new RuntimeException();
@@ -875,6 +880,15 @@ public class NearlineStorageHandler
             return requests.values().stream()
                   .map(Object::toString)
                   .collect(Collectors.joining("\n"));
+        }
+
+        public String printJobQueue(PnfsId pnfsId) {
+            R requestWithPNFSID = requests.get(pnfsId);
+            if (requestWithPNFSID == null) {
+                return pnfsId + " not in the queue";
+            } else {
+                return requestWithPNFSID.toString();
+            }
         }
 
         public String printJobQueue(Comparator<R> ordering) {
@@ -1294,7 +1308,7 @@ public class NearlineStorageHandler
                         ReplicaState.FROM_STORE,
                         ReplicaState.CACHED,
                         Collections.emptyList(),
-                        EnumSet.noneOf(Repository.OpenFlags.class),
+                        EnumSet.noneOf(OpenFlags.class),
                         OptionalLong.empty());
             LOGGER.debug("Stage request created for {}.", pnfsId);
         }
@@ -1566,10 +1580,17 @@ public class NearlineStorageHandler
                 "The columns in the output show: job id, job status, pnfs id, request counter, " +
                 "and request submission time.")
     class RestoreListCommand implements Callable<String> {
+        @Argument(metaVar = "pnfsid", required = false)
+        String arg;
 
         @Override
-        public String call() {
-            return stageRequests.printJobQueue(Comparator.naturalOrder());
+        public String call() throws NoSuchElementException, IllegalStateException {
+            if (arg == null){
+                return stageRequests.printJobQueue(Comparator.naturalOrder());
+            } else {
+                var pnfsId = new PnfsId(arg);
+                return stageRequests.printJobQueue(pnfsId);
+            }
         }
     }
 
@@ -1634,10 +1655,17 @@ public class NearlineStorageHandler
                 "The columns in the output show: job id, job status, pnfs id, request counter, " +
                 "and request submission time.")
     class StoreListCommand implements Callable<String> {
+        @Argument(metaVar = "pnfsid", required = false)
+        String arg;
 
         @Override
-        public String call() {
-            return flushRequests.printJobQueue(Comparator.naturalOrder());
+        public String call() throws NoSuchElementException, IllegalStateException {
+            if(arg == null){
+                return flushRequests.printJobQueue(Comparator.naturalOrder());
+            } else {
+                var pnfsId = new PnfsId(arg);
+                return flushRequests.printJobQueue(pnfsId);
+            }
         }
     }
 

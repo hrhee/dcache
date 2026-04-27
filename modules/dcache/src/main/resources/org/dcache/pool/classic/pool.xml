@@ -92,7 +92,8 @@
     <property name="poolMode" ref="pool-mode"/>
     <property name="billingStub" ref="billing-stub"/>
     <property name="executor" ref="workerThreadPool"/>
-    <property name="enableHsmFlag" value="${pool.enable.hsm-flag}"/>
+    <property name="fileRequestMonitor" ref="migration"/>
+    <property name="hotFileReplicationEnabled" value="${pool.hotfile.replication.enable}"/>
   </bean>
 
   <bean id="pnfs" class="diskCacheV111.util.PnfsHandler">
@@ -304,19 +305,23 @@
     <description>SSL Context factory for JDK</description>
   </bean>
 
+  <bean id="migrationContext" class="org.dcache.pool.migration.MigrationContextImpl">
+        <property name="repository" ref="rep"/>
+        <property name="executor" ref="workerThreadPool"/>
+        <property name="pnfsStub" ref="pnfsStub"/>
+        <property name="poolStub" ref="poolStub"/>
+        <property name="poolManagerStub" ref="poolManagerStub"/>
+        <property name="pinManagerStub" ref="pinManagerStub"/>
+    </bean>
+
   <bean id="migration" class="org.dcache.pool.migration.MigrationModule"
         destroy-method="cancelAll">
     <description>Replica migration module client</description>
-    <constructor-arg>
-        <bean class="org.dcache.pool.migration.MigrationContextImpl">
-            <property name="repository" ref="rep"/>
-            <property name="executor" ref="workerThreadPool"/>
-            <property name="pnfsStub" ref="pnfsStub"/>
-            <property name="poolStub" ref="poolStub"/>
-            <property name="poolManagerStub" ref="poolManagerStub"/>
-            <property name="pinManagerStub" ref="pinManagerStub"/>
-        </bean>
-    </constructor-arg>
+    <constructor-arg ref="migrationContext"/>
+    <property name="numReplicas" value="${pool.migration.hotfile.replicas}"/>
+    <property name="threshold" value="${pool.migration.hotfile.threshold}"/>
+    <property name="defaultRefresh" value="${pool.migration.refresh.default}"/>
+    <property name="defaultConcurrency" value="${pool.migration.concurrency.default}"/>
   </bean>
 
   <bean id="migration-server"
@@ -345,6 +350,15 @@
     <property name="queues" value="${pool.queues}"/>
   </bean>
 
+  <bean id="transfer-lifecycle" class="org.dcache.pool.movers.TransferLifeCycle">
+    <description>Transfer lifecycle</description>
+    <property name="enabled" value="${pool.enable.firefly}" />
+    <property name="fireflyDestination" value="${pool.firefly.destination}" />
+    <property name="excludes" value="${pool.firefly.excludes}" />
+    <property name="voMapping" value="${pool.firefly.vo-mapping}" />
+    <property name="storageStatisticsEnabled" value="${pool.firefly.storage-statistics}" />
+  </bean>
+
   <bean id="default-transfer-service" class="org.dcache.pool.classic.MoverMapTransferService"
           destroy-method="shutdown" depends-on="rep">
       <description>Generic transfer service</description>
@@ -366,6 +380,7 @@
       <property name="certFile" value="${pool.mover.nfs.hostcert.cert}"/>
       <property name="keyFile" value="${pool.mover.nfs.hostcert.key}"/>
       <property name="caPath" value="${pool.mover.nfs.capath}"/>
+      <property name="multipathAddresses" value="${pool.mover.nfs.multipath}"/>
   </bean>
 
   <bean id="signing-policy"
@@ -393,6 +408,7 @@
       <property name="maxWriteBufferSize" value="#{ byteSizeParser.parse('${pool.mover.xrootd.write-buffer-size}') }"/>
       <property name="readReconnectTimeout" value="${pool.mover.xrootd.read-reconnect-timeout}"/>
       <property name="readReconnectTimeoutUnit" value="${pool.mover.xrootd.read-reconnect-timeout.unit}"/>
+      <property name="transferLifeCycle" ref="transfer-lifecycle" />
       <property name="accessLogPlugins">
         <bean class="org.dcache.xrootd.spring.ChannelHandlerFactoryFactoryBean">
           <property name="plugins" value="access-log"/>
@@ -462,6 +478,7 @@
         <property name="chunkSize" value="${pool.mover.http.chunk-size}"/>
         <property name="connectTimeout" value="${pool.mover.http.timeout.connect}"/>
         <property name="connectTimeoutUnit" value="${pool.mover.http.timeout.connect.unit}"/>
+        <property name="transferLifeCycle" ref="transfer-lifecycle" />
         <property name="doorStub" ref="doorStub"/>
         <property name="portRange">
             <bean class="org.dcache.util.NettyPortRange">
@@ -479,6 +496,7 @@
   <bean id="remote-http-transfer-service" class="org.dcache.pool.classic.RemoteHttpTransferService"
           depends-on="rep" destroy-method="shutdown">
       <property name="postTransferService" ref="post-transfer-service"/>
+      <property name="transferLifeCycle" ref="transfer-lifecycle"/>
       <property name="certificateAuthorityPath" value="${pool.mover.http-tpc.authn.capath}"/>
       <property name="certificateAuthorityUpdateInterval" value="${pool.mover.http-tpc.authn.capath.refresh}"/>
       <property name="certificateAuthorityUpdateIntervalUnit" value="${pool.mover.http-tpc.authn.capath.refresh.unit}"/>
@@ -516,13 +534,14 @@
        <property name="billingStub" ref="billing-stub"/>
        <property name="poolName" value="${pool.name}"/>
        <property name="checksumModule" ref="csm"/>
+       <property name="transferLifeCycle" ref="transfer-lifecycle" />
   </bean>
 
 
   <bean id="abstract-transfer-service" abstract="true" class="org.dcache.pool.classic.TransferServices">
       <description>Collection of transfer services</description>
-      <property name="defaultFactory" ref="default-transfer-service"/>
-      <property name="factories">
+      <property name="defaultTransferService" ref="default-transfer-service"/>
+      <property name="transferServices">
         <map>
             <entry key="NFS4-4" value-ref="nfs-transfer-service" />
             <!-- Xrootd-2 is here for backward compatibility with doors
@@ -773,7 +792,7 @@
     <beans profile="httpsredirect-true">
         <bean id="transfer-services" parent="abstract-transfer-service">
             <description>Collection of transfer services with https</description>
-            <property name="factories">
+            <property name="transferServices">
                 <map merge="true">
                     <entry key="Https-1" value-ref="https-transfer-service"/>
                 </map>

@@ -1,7 +1,7 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <groupId>org.dcache</groupId>
-    <version>10.1.0-SNAPSHOT</version>
+    <version>12.0.0-SNAPSHOT</version>
     <artifactId>dcache-parent</artifactId>
     <packaging>pom</packaging>
 
@@ -62,27 +62,29 @@
 
         <version.slf4j>1.7.32</version.slf4j>
         <version.milton>2.7.3.0-dcache-1</version.milton>
-        <version.spring>5.3.27</version.spring>
+        <version.spring>5.3.39</version.spring>
         <!-- Remember to sync aspectj version in dcache.properties -->
-        <version.aspectj>1.9.9.1</version.aspectj>
-        <version.smc>6.6.0</version.smc>
+        <version.aspectj>1.9.25.1</version.aspectj>
+        <version.smc>7.6.0</version.smc>
         <version.xerces>2.12.0</version.xerces>
-        <version.jetty>9.4.52.v20230823</version.jetty>
+        <version.jetty>9.4.57.v20241219</version.jetty>
         <version.xrootd4j>4.6.0</version.xrootd4j>
-        <version.jersey>2.41</version.jersey>
+        <version.jersey>2.47</version.jersey>
         <version.dcache-view>3.0.0</version.dcache-view>
         <version.dcache-view-admin>3.0.0</version.dcache-view-admin>
-        <version.netty>4.1.108.Final</version.netty>
+        <version.netty>4.2.10.Final</version.netty>
         <version.dcache>${project.version}</version.dcache>
-        <version.swagger-ui>3.1.7</version.swagger-ui>
+        <version.swagger-ui>5.30.2</version.swagger-ui>
 
         <!-- Remember to update modules/logback-test-config/pom.xml
              when upgrading logback. -->
         <version.logback>1.2.13</version.logback>
         <version.logback.contrib>0.1.5</version.logback.contrib>
-        <version.jackson>2.14.0</version.jackson>
-        <version.jna>5.4.0</version.jna>
+        <version.jackson>2.18.6</version.jackson>
+        <version.jna>5.18.1</version.jna>
         <jmh.version>1.35</jmh.version>
+        <version.dropwizard>4.1.29</version.dropwizard>
+        <version.nfs4j>0.27.2</version.nfs4j>
 
 
 
@@ -93,12 +95,13 @@
 
         <bouncycastle.bcprov>bcprov-jdk18on</bouncycastle.bcprov>
         <bouncycastle.bcpkix>bcpkix-jdk18on</bouncycastle.bcpkix>
-        <bouncycastle.version>1.78</bouncycastle.version>
+        <bouncycastle.version>1.79</bouncycastle.version>
 
         <datanucleus-core.version>6.0.6</datanucleus-core.version>
         <datanucleus.plugin.version>6.0.0-release</datanucleus.plugin.version>
         <asm.version>9.5</asm.version>
         <asm-tools.version>5.0.3</asm-tools.version>
+        <jacoco.version>0.8.14</jacoco.version>
     </properties>
 
     <scm>
@@ -163,7 +166,7 @@
             <dependency>
                 <groupId>org.apache.curator</groupId>
                 <artifactId>curator-recipes</artifactId>
-                <version>5.6.0</version>
+                <version>5.9.0</version>
                 <exclusions>
                     <exclusion>
                         <groupId>org.slf4j</groupId>
@@ -178,7 +181,7 @@
             <dependency>
                 <groupId>org.apache.zookeeper</groupId>
                 <artifactId>zookeeper</artifactId>
-                <version>3.7.2</version>
+                <version>3.8.6</version>
                 <exclusions>
                     <exclusion>
                         <groupId>com.sun.jmx</groupId>
@@ -206,7 +209,7 @@
             <dependency>
                 <groupId>io.dropwizard.metrics</groupId>
                 <artifactId>metrics-core</artifactId>
-                <version>4.1.29</version>
+                <version>${version.dropwizard}</version>
                 <exclusions>
                     <exclusion>
                         <groupId>org.slf4j</groupId>
@@ -260,33 +263,6 @@
                 </exclusions>
             </dependency>
             <dependency>
-                <groupId>org.glite.authz</groupId>
-                <artifactId>pep-common</artifactId>
-                <version>2.3.1</version>
-            </dependency>
-            <dependency>
-                <groupId>org.glite.authz</groupId>
-                <artifactId>pep-java</artifactId>
-                <version>2.3.0</version>
-                <exclusions>
-                    <exclusion>
-                        <groupId>log4j</groupId>
-                        <artifactId>log4j</artifactId>
-                    </exclusion>
-                </exclusions>
-            </dependency>
-            <dependency>
-                <groupId>commons-httpclient</groupId>
-                <artifactId>commons-httpclient</artifactId>
-                <version>3.1</version>
-                <exclusions>
-                    <exclusion>
-                        <groupId>commons-logging</groupId>
-                        <artifactId>commons-logging</artifactId>
-                    </exclusion>
-                </exclusions>
-            </dependency>
-            <dependency>
                 <groupId>gov.fnal</groupId>
                 <artifactId>vox-alldepends</artifactId>
                 <version>1.0</version>
@@ -320,23 +296,6 @@
                 <groupId>com.sun.xml.rpc</groupId>
                 <artifactId>jaxrpc-spi</artifactId>
                 <version>1.1.3_01</version>
-            </dependency>
-            <dependency>
-                <groupId>axis</groupId>
-                <artifactId>axis</artifactId>
-                <version>1.4</version>
-                <exclusions>
-                    <exclusion>
-                        <groupId>commons-logging</groupId>
-                        <artifactId>commons-logging</artifactId>
-                    </exclusion>
-                    <!-- 'servlet-api' conflicts with Jetty-supplied
-                         'javax.servlet' jar. -->
-                    <exclusion>
-                        <groupId>javax.servlet</groupId>
-                        <artifactId>servlet-api</artifactId>
-                    </exclusion>
-                </exclusions>
             </dependency>
             <dependency>
                 <groupId>terapaths</groupId>
@@ -395,8 +354,40 @@
             <dependency>
                 <groupId>io.netty</groupId>
                 <artifactId>netty-tcnative-boringssl-static</artifactId>
-                <version>2.0.48.Final</version>
+                <version>2.0.72.Final</version>
             </dependency>
+            <!-- enforce netty version used by transient dependencies -->
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-transport</artifactId>
+                <version>${version.netty}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-transport-native-epoll</artifactId>
+                <version>${version.netty}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-codec</artifactId>
+                <version>${version.netty}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-buffer</artifactId>
+                <version>${version.netty}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-common</artifactId>
+                <version>${version.netty}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-resolver</artifactId>
+                <version>${version.netty}</version>
+            </dependency>
+
             <dependency>
                 <groupId>com.sleepycat</groupId>
                 <artifactId>je</artifactId>
@@ -557,28 +548,19 @@
 	    <dependency>
 	      <groupId>org.apache.sshd</groupId>
 	      <artifactId>sshd-core</artifactId>
-	      <version>2.7.0</version>
+	      <version>2.17.1</version>
 	    </dependency>
             <dependency>
-                <!-- Newer versions have two problems. A performance regression causes it to block on non-responding network
-                     interfaces (https://liquibase.jira.com/browse/CORE-2549). There is also an as of yet unreported regression
-                     affecting how quoting rules are applied during rollback. -->
-		<!-- A separate issue was found with liquibase 3.5.4
-		     where the 'chimera' shell's writetag command
-		     failed on PostgreSQL 10.2 with the error:
-
-		         ERROR: column "ivalue" is of type oid but
-		         expression is of type bytea
-			 Hint: You will need to rewrite or cast the expression.
-		     -->
                 <groupId>org.liquibase</groupId>
                 <artifactId>liquibase-core</artifactId>
-                <version>3.3.2</version>
+                <version>4.29.2</version>
             </dependency>
+
+            <!-- needed by liquibase cli -->
             <dependency>
-                <groupId>com.mattbertolini</groupId>
-                <artifactId>liquibase-slf4j</artifactId>
-                <version>2.0.0</version>
+                <groupId>info.picocli</groupId>
+                <artifactId>picocli</artifactId>
+                <version>4.7.6</version>
             </dependency>
 
             <dependency>
@@ -646,8 +628,9 @@
 
             <dependency>
                 <groupId>net.sf.smc</groupId>
-                <artifactId>statemap</artifactId>
+                <artifactId>smc</artifactId>
                 <version>${version.smc}</version>
+                <type>pom</type>
             </dependency>
 
             <dependency>
@@ -664,12 +647,6 @@
             </dependency>
 
             <dependency>
-                <groupId>saxon</groupId>
-                <artifactId>saxon</artifactId>
-                <version>6.5.3</version>
-            </dependency>
-
-            <dependency>
                 <groupId>java.jndi</groupId>
                 <artifactId>nis</artifactId>
                 <version>1.2.1</version>
@@ -678,7 +655,7 @@
             <dependency>
                 <groupId>org.json</groupId>
                 <artifactId>json</artifactId>
-                <version>20231013</version>
+                <version>20251224</version>
             </dependency>
 
             <dependency>
@@ -770,13 +747,13 @@
             <dependency>
                 <groupId>com.google.code.gson</groupId>
                 <artifactId>gson</artifactId>
-                <version>2.8.9</version>
+                <version>2.13.2</version>
             </dependency>
 
             <dependency>
               <groupId>org.apache.commons</groupId>
               <artifactId>commons-compress</artifactId>
-              <version>1.26.0</version>
+              <version>1.28.0</version>
             </dependency>
             <dependency>
                 <groupId>org.apache.commons</groupId>
@@ -785,13 +762,29 @@
             </dependency>
             <dependency>
                 <groupId>org.python</groupId>
-                <artifactId>jython-standalone</artifactId>
+                <artifactId>jython-slim</artifactId>
                 <version>2.7.3</version>
+                <exclusions>
+                    <exclusion>
+                        <groupId>com.github.jnr</groupId>
+                        <artifactId>jffi</artifactId>
+                    </exclusion>
+                </exclusions>
+            </dependency>
+            <dependency>
+                <groupId>org.dcache</groupId>
+                <artifactId>oncrpc4j-core</artifactId>
+                <version>3.4.2</version>
             </dependency>
         <dependency>
             <groupId>org.dcache</groupId>
             <artifactId>nfs4j-core</artifactId>
-            <version>0.25.0</version>
+            <version>${version.nfs4j}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.dcache</groupId>
+            <artifactId>rquota</artifactId>
+            <version>${version.nfs4j}</version>
         </dependency>
         <dependency>
             <groupId>com.github.nitram509</groupId>
@@ -833,7 +826,13 @@
             <dependency>
                 <groupId>junit</groupId>
                 <artifactId>junit</artifactId>
-                <version>4.13.1</version>
+                <version>4.13.2</version>
+                <exclusions>
+                    <exclusion>
+                        <groupId>org.hamcrest</groupId>
+                        <artifactId>hamcrest-core</artifactId>
+                    </exclusion>
+                </exclusions>
             </dependency>
             <dependency>
                 <groupId>org.dcache</groupId>
@@ -849,7 +848,7 @@
             <dependency>
                 <groupId>org.mongodb</groupId>
                 <artifactId>mongodb-driver-sync</artifactId>
-                <version>4.11.1</version>
+                <version>5.0.0</version>
             </dependency>
 
             <dependency>
@@ -925,6 +924,12 @@
                 <version>${version.jackson}</version>
             </dependency>
 
+	    <dependency>
+	        <groupId>com.fasterxml.jackson.datatype</groupId>
+		<artifactId>jackson-datatype-jdk8</artifactId>
+		<version>${version.jackson}</version>
+	    </dependency>
+
             <dependency>
                 <groupId>com.fasterxml.jackson.core</groupId>
                 <artifactId>jackson-annotations</artifactId>
@@ -938,11 +943,6 @@
             </dependency>
 
             <dependency>
-                <groupId>org.glassfish</groupId>
-                <artifactId>javax.json</artifactId>
-                <version>1.0.4</version>
-            </dependency>
-            <dependency>
                 <groupId>org.webjars</groupId>
                 <artifactId>swagger-ui</artifactId>
                 <version>${version.swagger-ui}</version>
@@ -950,7 +950,7 @@
             <dependency>
                 <groupId>io.swagger</groupId>
                 <artifactId>swagger-jersey2-jaxrs</artifactId>
-                <version>1.6.2</version>
+                <version>1.6.14</version>
             </dependency>
             <dependency>
                 <groupId>org.springframework.plugin</groupId>
@@ -961,12 +961,7 @@
                 <!-- enforce version as javassist used powermock -->
                 <groupId>org.javassist</groupId>
                 <artifactId>javassist</artifactId>
-                <version>3.25.0-GA</version>
-            </dependency>
-            <dependency>
-                <groupId>org.reflections</groupId>
-                <artifactId>reflections</artifactId>
-                <version>0.9.12</version>
+                <version>3.30.2-GA</version>
             </dependency>
 	    <dependency>
                 <groupId>com.github.npathai</groupId>
@@ -994,6 +989,11 @@
                 <artifactId>jmh-generator-annprocess</artifactId>
                 <version>${jmh.version}</version>
             </dependency>
+            <dependency>
+                <groupId>com.github.erosb</groupId>
+                <artifactId>everit-json-schema</artifactId>
+                <version>1.14.1</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 
@@ -1006,7 +1006,7 @@
         <dependency>
            <groupId>org.powermock</groupId>
             <artifactId>powermock-api-mockito2</artifactId>
-            <version>2.0.4</version>
+            <version>2.0.9</version>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -1032,6 +1032,14 @@
             <version>${project.version}</version>
             <scope>test</scope>
         </dependency>
+
+        <dependency>
+            <groupId>io.prometheus.jmx</groupId>
+            <artifactId>jmx_prometheus_javaagent</artifactId>
+            <!-- must be in sync with prometheus.exporter.jar in dcache.properties -->
+            <version>1.0.1</version>
+        </dependency>
+
     </dependencies>
 
     <build>
@@ -1049,9 +1057,6 @@
                     <configuration>
                         <showDeprecation>true</showDeprecation>
                         <release>${java.version}</release>
-                        <!-- without forking compilation happens in the
-                        same process, so no arguments are applied -->
-                        <fork>true</fork>
                     </configuration>
                 </plugin>
                 <plugin>
@@ -1143,12 +1148,12 @@
                 <plugin>
                   <groupId>org.codehaus.mojo</groupId>
                   <artifactId>exec-maven-plugin</artifactId>
-                  <version>3.1.0</version>
+                  <version>3.5.0</version>
                 </plugin>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
-                    <version>3.1.2</version>
+                    <version>3.2.5</version>
                     <configuration>
                         <!-- Disable stack-trace trimming as
                              surefire makes bad decisions too often. -->
@@ -1215,19 +1220,9 @@
                     </configuration>
                 </plugin>
                 <plugin>
-                    <groupId>org.codehaus.mojo</groupId>
-                    <artifactId>axistools-maven-plugin</artifactId>
-                    <version>1.4</version>
-                </plugin>
-                <plugin>
-                    <groupId>io.github.lukasmansour</groupId>
-                    <artifactId>patch-maven-plugin</artifactId>
-                    <version>1.0</version>
-                </plugin>
-                <plugin>
                     <groupId>org.jacoco</groupId>
                     <artifactId>jacoco-maven-plugin</artifactId>
-                    <version>0.8.8</version>
+                    <version>${jacoco.version}</version>
                 </plugin>
                 <plugin>
                     <groupId>com.ruleoftech</groupId>
@@ -1366,6 +1361,7 @@
                          to accept the overhead of forking each test run. -->
                     <forkCount>1</forkCount>
                     <reuseForks>false</reuseForks>
+                    <redirectTestOutputToFile>true</redirectTestOutputToFile>
                     <!-- Make Powermock compatible with JDK 17 -->
                     <argLine>
                         @{argLine}
@@ -1458,7 +1454,7 @@
         <module>modules/common-security</module>
         <module>modules/cells</module>
         <module>modules/gplazma2</module>
-        <module>modules/gplazma2-argus</module>
+        <module>modules/gplazma2-alise</module>
         <module>modules/gplazma2-fermi</module>
         <module>modules/gplazma2-grid</module>
         <module>modules/gplazma2-krb5</module>
@@ -1470,6 +1466,7 @@
         <module>modules/gplazma2-kpwd</module>
         <module>modules/gplazma2-ldap</module>
         <module>modules/gplazma2-htpasswd</module>
+        <module>modules/gplazma2-pyscript</module>
         <module>modules/gplazma2-oidc</module>
         <module>modules/gplazma2-oidc-te</module>
         <module>modules/gplazma2-omnisession</module>
@@ -1489,15 +1486,11 @@
         <module>modules/dcache-gplazma</module>
         <module>modules/dcache-frontend</module>
         <module>modules/dcache-nfs</module>
-        <module>modules/dcache-srm</module>
         <module>modules/dcache-history</module>
         <module>modules/dcache-info</module>
         <module>modules/dcache-spacemanager</module>
         <module>modules/dcache-qos</module>
         <module>modules/ftp-client</module>
-        <module>modules/srm-common</module>
-        <module>modules/srm-server</module>
-        <module>modules/srm-client</module>
         <module>modules/acl-vehicles</module>
         <module>modules/acl</module>
         <module>modules/chimera</module>
@@ -1511,52 +1504,48 @@
 
     <profiles>
       <profile>
-	<id>code-coverage</id>
-
-	<build>
-	  <plugins>
-            <!-- Configured as described here:
-		 http://www.petrikainulainen.net/programming/maven/creating-code-coverage-reports-for-unit-and-integration-tests-with-the-jacoco-maven-plugin/
-	    -->
-	    <plugin>
-	      <groupId>org.jacoco</groupId>
-	      <artifactId>jacoco-maven-plugin</artifactId>
-	      <executions>
-		<!--
-		    Prepares the property pointing to the JaCoCo runtime agent which
-		    is passed as VM argument when Maven the Surefire plugin is executed.
-		-->
-		<execution>
-		  <id>pre-unit-test</id>
-		  <goals>
-                    <goal>prepare-agent</goal>
-		  </goals>
-		  <configuration>
-                    <!-- Sets the path to the file which contains the execution data. -->
-                    <destFile>${project.build.directory}/coverage-reports/jacoco-ut.exec</destFile>
-		  </configuration>
-		</execution>
-		<!--
-		    Ensures that the code coverage report for unit tests is created after
-		    unit tests have been run.
-		-->
-		<execution>
-		  <id>post-unit-test</id>
-		  <phase>test</phase>
-		  <goals>
-                    <goal>report</goal>
-		  </goals>
-		  <configuration>
-                    <!-- Sets the path to the file which contains the execution data. -->
-                    <dataFile>${project.build.directory}/coverage-reports/jacoco-ut.exec</dataFile>
-                    <!-- Sets the output directory for the code coverage report. -->
-                    <outputDirectory>${project.reporting.outputDirectory}/jacoco-ut</outputDirectory>
-		  </configuration>
-		</execution>
-	      </executions>
-	    </plugin>
-	  </plugins>
-	</build>
+	    <id>code-coverage</id>
+          <build>
+              <plugins>
+                  <plugin>
+                      <groupId>org.jacoco</groupId>
+                      <artifactId>jacoco-maven-plugin</artifactId>
+                      <executions>
+                          <!--
+                              Prepares the property pointing to the JaCoCo runtime agent which
+                              is passed as VM argument when Maven the Surefire plugin is executed.
+                          -->
+                          <execution>
+                              <id>pre-unit-test</id>
+                              <goals>
+                                  <goal>prepare-agent</goal>
+                              </goals>
+                              <configuration>
+                                  <!-- Sets the path to the file which contains the execution data. -->
+                                  <destFile>${project.build.directory}/coverage-reports/jacoco-ut.exec</destFile>
+                              </configuration>
+                          </execution>
+                          <!--
+                              Ensures that the code coverage report for unit tests is created after
+                              unit tests have been run.
+                          -->
+                          <execution>
+                              <id>post-unit-test</id>
+                              <phase>test</phase>
+                              <goals>
+                                  <goal>report</goal>
+                              </goals>
+                              <configuration>
+                                  <!-- Sets the path to the file which contains the execution data. -->
+                                  <dataFile>${project.build.directory}/coverage-reports/jacoco-ut.exec</dataFile>
+                                  <!-- Sets the output directory for the code coverage report. -->
+                                  <outputDirectory>${project.reporting.outputDirectory}/jacoco-ut</outputDirectory>
+                              </configuration>
+                          </execution>
+                      </executions>
+                  </plugin>
+              </plugins>
+	        </build>
       </profile>
     </profiles>
 </project>

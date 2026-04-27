@@ -74,7 +74,6 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.Map;
-import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import org.dcache.pinmanager.PinManagerPinMessage;
 import org.dcache.services.bulk.BulkServiceException;
@@ -91,18 +90,18 @@ public final class PinActivity extends PinManagerActivity {
         super(name, targetType);
     }
 
-    public void cancel(BulkRequestTarget target) {
-        super.cancel(target);
+    public void cancel(String prefix, BulkRequestTarget target) {
+        super.cancel(prefix, target);
         try {
-            pinManager.send(unpinMessage(id, target));
+            pinManager.send(unpinMessage(id, prefix, target));
         } catch (CacheException e) {
-            target.setErrorObject(new BulkServiceException("unable to fetch pnfsid of target in "
+                        target.setErrorObject(new BulkServiceException("unable to fetch pnfsid of target in "
                   + "order to cancel pinning.", e));
         }
     }
 
     @Override
-    public ListenableFuture<Message> perform(String rid, long tid, FsPath target,
+    public ListenableFuture<Message> perform(String rid, long tid, String prefix, FsPath path,
           FileAttributes attributes) {
         if (id == null) {
             id = rid;
@@ -110,7 +109,8 @@ public final class PinActivity extends PinManagerActivity {
 
         try {
             if (attributes == null) {
-                attributes = getAttributes(target);
+                FsPath absolutePath = BulkRequestTarget.computeFsPath(prefix, path.toString());
+                attributes = getAttributes(absolutePath);
             }
 
             checkPinnable(attributes);
@@ -121,11 +121,6 @@ public final class PinActivity extends PinManagerActivity {
                   id,
                   lifetimeInMillis);
             message.setSubject(subject);
-
-            Optional<ListenableFuture<Message>> skipOption = skipIfOnline(attributes, message);
-            if (skipOption.isPresent()) {
-                return skipOption.get();
-            }
 
             return pinManager.send(message, Long.MAX_VALUE);
         } catch (URISyntaxException | CacheException e) {

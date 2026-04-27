@@ -62,6 +62,7 @@ package org.dcache.resilience.util;
 import java.util.Collection;
 import java.util.Map;
 import org.dcache.resilience.data.PoolInfoMap;
+import org.dcache.util.pool.AbstractLocationExtractor;
 
 /**
  * <p>Implementation of the {@link AbstractLocationExtractor}
