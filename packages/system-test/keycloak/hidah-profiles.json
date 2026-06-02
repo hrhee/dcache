@@ -1,0 +1,13 @@
+[
+  {
+    "sub": "testuser-001",
+    "preferred_username": "testuser",
+    "name": "Test User",
+    "given_name": "Test",
+    "family_name": "User",
+    "email": "testuser@helmholtz.example",
+    "email_verified": true,
+    "eduperson_scoped_affiliation": ["member@helmholtz.example"],
+    "eduperson_assurance": ["https://refeds.org/assurance/IAP/low"]
+  }
+]
