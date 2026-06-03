@@ -7,6 +7,9 @@ services:
     environment:
       CLIENT_ID: test-client
       CLIENT_SECRET: test-client-secret
+      PUBLIC_CLIENT: "false"
+      OIDC_SCOPES: "openid email profile"
+      STRATEGIES_ACCESS_TOKEN: "jwt"
       # Redirect for the get-token.py PKCE helper
       REDIRECT_URI: http://localhost:8999/callback
       BIND_HOST: "0.0.0.0:8080"
@@ -17,9 +20,10 @@ services:
       DB_PATH: /hidah/identities
       PRELOAD_PROFILES_PATH: /hidah/profiles.json
       PRELOADED_PROFILES_OVERRIDE_STORAGE: "true"
+    tmpfs:
+      - /hidah/identities
     volumes:
       - ./hidah-profiles.json:/hidah/profiles.json:ro
-      - hidah-data:/hidah/identities
     ports:
       - "8085:8080"
 
@@ -30,14 +34,11 @@ services:
       KEYCLOAK_ADMIN_PASSWORD: admin
       KC_HTTP_ENABLED: "true"
       KC_HOSTNAME_STRICT: "false"
-    # Allows Keycloak container to reach HiDAH on the host at host.docker.internal:8085
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    command: start-dev
+    command: start-dev --features=admin-fine-grained-authz,token-exchange
     ports:
       - "8081:8080"
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health/ready || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/realms/master || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 18
@@ -45,5 +46,3 @@ services:
     depends_on:
       - hidah
 
-volumes:
-  hidah-data:
