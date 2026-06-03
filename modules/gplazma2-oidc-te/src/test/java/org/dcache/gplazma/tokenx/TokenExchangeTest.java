@@ -17,12 +17,8 @@
  */
 package org.dcache.gplazma.tokenx;
 
-import static org.dcache.gplazma.tokenx.TokenExchange.AUDIENCE;
 import static org.dcache.gplazma.tokenx.TokenExchange.CLIENT_ID;
 import static org.dcache.gplazma.tokenx.TokenExchange.CLIENT_SECRET;
-import static org.dcache.gplazma.tokenx.TokenExchange.GRANT_TYPE;
-import static org.dcache.gplazma.tokenx.TokenExchange.SUBJECT_ISSUER;
-import static org.dcache.gplazma.tokenx.TokenExchange.SUBJECT_TOKEN_TYPE;
 import static org.dcache.gplazma.tokenx.TokenExchange.TOKEN_EXCHANGE_URL;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.equalToIgnoringCase;
@@ -35,6 +31,7 @@ import java.io.UnsupportedEncodingException;
 import java.util.Properties;
 
 import org.apache.http.HttpEntity;
+import org.apache.http.StatusLine;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.CloseableHttpClient;
@@ -97,6 +94,9 @@ public class TokenExchangeTest {
 
         public AuthorizationServerBuilder thatExchanges() {
             CloseableHttpResponse mockResponse = Mockito.mock(CloseableHttpResponse.class);
+            StatusLine mockStatusLine = Mockito.mock(StatusLine.class);
+            Mockito.when(mockStatusLine.getStatusCode()).thenReturn(200);
+            Mockito.when(mockResponse.getStatusLine()).thenReturn(mockStatusLine);
             String jsonContent = "{\"access_token\": \"valid.access.token\"}";
             try {
                 HttpEntity entity = new StringEntity(jsonContent);
@@ -116,8 +116,13 @@ public class TokenExchangeTest {
             return this;
         }
 
-        public AuthorizationServerBuilder thatThrowsIOException() throws IOException {
-            throw new IOException("IOException thrown");
+        public AuthorizationServerBuilder thatThrowsIOException() {
+            try {
+                when(httpClient.execute(any())).thenThrow(new IOException("network error"));
+            } catch (IOException e) {
+                throw new RuntimeException("Impossible exception caught", e);
+            }
+            return this;
         }
 
         public CloseableHttpClient build() {
@@ -137,10 +142,6 @@ public class TokenExchangeTest {
             properties.put(TOKEN_EXCHANGE_URL, "https://keycloak.desy.de/auth/realms/production/protocol/openid-connect/token");
             properties.put(CLIENT_ID, "token-exchange");
             properties.put(CLIENT_SECRET, "secret");
-            properties.put(GRANT_TYPE, "urn:ietf:params:oauth:grant-type:token-exchange");
-            properties.put(SUBJECT_ISSUER, "oidc");
-            properties.put(SUBJECT_TOKEN_TYPE, "urn:ietf:params:oauth:token-type:access_token");
-            properties.put(AUDIENCE, "token-exchange");
         }
 
         public PluginBuilder withAuthorizationServer(AuthorizationServerBuilder builder) {

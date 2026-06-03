@@ -121,13 +121,13 @@ def main():
         print(f"ERROR: token exchange failed ({e.code}): {body}", file=sys.stderr)
         sys.exit(1)
 
-    access_token = token_response.get("access_token")
-    if not access_token:
-        print(f"ERROR: no access_token in response: {token_response}", file=sys.stderr)
+    id_token = token_response.get("id_token")
+    if not id_token:
+        print(f"ERROR: no id_token in response: {token_response}", file=sys.stderr)
         sys.exit(1)
 
     print(f"Got token (expires_in={token_response.get('expires_in')}s)", file=sys.stderr)
-    print(access_token)
+    print(id_token)
 
 
 if __name__ == "__main__":

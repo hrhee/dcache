@@ -7,16 +7,18 @@ import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.security.Principal;
+import java.util.List;
 import java.util.Properties;
 import java.util.Set;
 
 import org.apache.http.HttpEntity;
+import org.apache.http.client.entity.UrlEncodedFormEntity;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.utils.URIBuilder;
-import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
+import org.apache.http.message.BasicNameValuePair;
 import org.apache.http.util.EntityUtils;
 import org.dcache.auth.BearerTokenCredential;
 import org.dcache.auth.attributes.Restriction;
@@ -37,39 +39,26 @@ public class TokenExchange implements GPlazmaAuthenticationPlugin {
     public final static String TOKEN_EXCHANGE_URL = "gplazma.oidc-te.url";
     public final static String CLIENT_ID = "gplazma.oidc-te.client-id";
     public final static String CLIENT_SECRET = "gplazma.oidc-te.client-secret";
-    public final static String GRANT_TYPE = "gplazma.oidc-te.grant-type";
-    public final static String SUBJECT_ISSUER = "gplazma.oidc-te.subject-issuer";
-    public final static String SUBJECT_TOKEN_TYPE = "gplazma.oidc-te.subject-token-type";
-    public final static String AUDIENCE = "gplazma.oidc-te.audience";
+
+    private static final String GRANT_TYPE = "urn:ietf:params:oauth:grant-type:jwt-bearer";
 
     private final CloseableHttpClient client;
 
     private final String tokenExchangeURL;
-    private final String clientID; 
-    private final String clientSecret; 
-    private final String grantType; 
-    private final String subjectIssuer; 
-    private final String subjectTokenType; 
-    private final String audience; 
+    private final String clientID;
+    private final String clientSecret;
 
     public TokenExchange (Properties properties) {
         this(properties, HttpClients.createDefault());
-
     }
 
     @VisibleForTesting
     TokenExchange (Properties properties, CloseableHttpClient client) {
-
         tokenExchangeURL = properties.getProperty(TOKEN_EXCHANGE_URL);
         clientID = properties.getProperty(CLIENT_ID);
         clientSecret = properties.getProperty(CLIENT_SECRET);
-        grantType = properties.getProperty(GRANT_TYPE);
-        subjectIssuer = properties.getProperty(SUBJECT_ISSUER);
-        subjectTokenType = properties.getProperty(SUBJECT_TOKEN_TYPE);
-        audience = properties.getProperty(AUDIENCE);
 
         this.client = requireNonNull(client);
-
     }
 
     @Override
@@ -111,32 +100,26 @@ public class TokenExchange implements GPlazmaAuthenticationPlugin {
 
     @VisibleForTesting
     String tokenExchange(String token) throws IOException, URISyntaxException {
-        String postBody = "client_id=" + clientID 
-                + "&client_secret=" + clientSecret
-                + "&grant_type=" + grantType
-                + "&subject_token=" + token
-                + "&subject_issuer=" + subjectIssuer
-                + "&subject_token_type=" + subjectTokenType
-                + "&audience=" + audience;
-
-    
         URI uri = new URIBuilder(tokenExchangeURL).build();
         HttpPost httpPost = new HttpPost(uri);
-    
-        httpPost.setHeader("Content-Type", "application/x-www-form-urlencoded");
-    
-        StringEntity stringEntity = new StringEntity(postBody);
-        httpPost.setEntity(stringEntity);
-    
+        httpPost.setEntity(new UrlEncodedFormEntity(List.of(
+            new BasicNameValuePair("client_id", clientID),
+            new BasicNameValuePair("client_secret", clientSecret),
+            new BasicNameValuePair("grant_type", GRANT_TYPE),
+            new BasicNameValuePair("assertion", token)
+        )));
+
         String responseBody = null;
 
         try (CloseableHttpResponse response = this.client.execute(httpPost)) {
-    
+            int status = response.getStatusLine().getStatusCode();
             HttpEntity responseEntity = response.getEntity();
             responseBody = EntityUtils.toString(responseEntity);
-    
-            LOG.debug("Response: " + response);
-            LOG.debug("Response body: " + responseBody);
+            if (status < 200 || status >= 300) {
+                throw new IOException("Token endpoint returned HTTP " + status + ": " + responseBody);
+            }
+            LOG.debug("Response: {}", response);
+            LOG.debug("Response body: {}", responseBody);
         }
 
         JSONObject result_json = new JSONObject(responseBody);

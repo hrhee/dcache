@@ -9,7 +9,7 @@ services:
       CLIENT_SECRET: test-client-secret
       PUBLIC_CLIENT: "false"
       OIDC_SCOPES: "openid email profile"
-      STRATEGIES_ACCESS_TOKEN: "jwt"
+      OAUTH2_ACCESS_TOKEN_STRATEGY: "jwt"
       # Redirect for the get-token.py PKCE helper
       REDIRECT_URI: http://localhost:8999/callback
       BIND_HOST: "0.0.0.0:8080"
@@ -28,13 +28,13 @@ services:
       - "8085:8080"
 
   keycloak:
-    image: quay.io/keycloak/keycloak:26.0
+    image: quay.io/keycloak/keycloak:26.6.1
     environment:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
       KC_HTTP_ENABLED: "true"
       KC_HOSTNAME_STRICT: "false"
-    command: start-dev --features=admin-fine-grained-authz,token-exchange
+    command: start-dev
     ports:
       - "8081:8080"
     healthcheck:

@@ -109,7 +109,14 @@ kc POST "/admin/realms/$REALM/identity-provider/instances" \
     }
   }' 2>/dev/null || echo "  (hidah IdP may already exist, continuing)"
 
-# 3. Create dcache-client (confidential, token-exchange capable)
+# 2b. Enable JWT Authorization Grant on the HiDAH identity provider
+echo "→ Enabling JWT Authorization Grant on HiDAH IdP..."
+HIDAH_IDP=$(kc GET "/admin/realms/$REALM/identity-provider/instances/hidah")
+UPDATED_IDP=$(echo "$HIDAH_IDP" | jq '.config.jwtAuthorizationGrantEnabled = "true" | .config.jwtAuthorizationGrantAssertionReuseAllowed = "true"')
+kc PUT "/admin/realms/$REALM/identity-provider/instances/hidah" "$UPDATED_IDP" \
+  2>/dev/null || echo "  (could not update hidah IdP, continuing)"
+
+# 3. Create dcache-client (confidential, JWT authorization grant capable)
 echo "→ Creating 'dcache-client'..."
 kc POST "/admin/realms/$REALM/clients" \
   '{
@@ -122,8 +129,9 @@ kc POST "/admin/realms/$REALM/clients" \
     "directAccessGrantsEnabled": true,
     "publicClient": false,
     "attributes": {
-      "oidc.token.exchange.grant.allowed": "true",
-      "oidc.token.exchange.grant.allowedIdentityProviders": "hidah"
+      "oauth2.jwt.authorization.grant.enabled": "true",
+      "oauth2.jwt.authorization.grant.idp": "hidah",
+      "oauth2.jwt.authorization.grant.audience": "[{\"key\":\"hidah\",\"value\":\"test-client\"}]"
     }
   }' 2>/dev/null || echo "  (dcache-client may already exist, continuing)"
 
@@ -159,9 +167,10 @@ echo "  IdP alias:    hidah  (mock Helmholtz ID at $HIDAH_BROWSER_URL)"
 echo "  Client:       dcache-client  (secret: dcache-client-secret)"
 echo "  Test user:    testuser  (linked to HiDAH sub=testuser-001)"
 echo ""
-echo "  Token exchange is enabled via KC 26 client attributes:"
-echo "    oidc.token.exchange.grant.allowed = true"
-echo "    oidc.token.exchange.grant.allowedIdentityProviders = hidah"
+echo "  JWT Authorization Grant is enabled via KC 26.6 attributes:"
+echo "    oauth2.jwt.authorization.grant.enabled = true"
+echo "    oauth2.jwt.authorization.grant.idp = hidah"
+echo "    hidah IdP: jwtAuthorizationGrantEnabled = true"
 echo ""
 echo "Next steps:"
 echo "  1. TOKEN=\$(python3 get-token.py)   # get a HiDAH access token"
