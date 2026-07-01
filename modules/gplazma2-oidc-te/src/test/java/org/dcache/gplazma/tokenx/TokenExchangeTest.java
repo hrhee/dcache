@@ -19,6 +19,10 @@ package org.dcache.gplazma.tokenx;
 
 import static org.dcache.gplazma.tokenx.TokenExchange.CLIENT_ID;
 import static org.dcache.gplazma.tokenx.TokenExchange.CLIENT_SECRET;
+import static org.dcache.gplazma.tokenx.TokenExchange.PRE_EXCHANGE_AUDIENCE;
+import static org.dcache.gplazma.tokenx.TokenExchange.PRE_EXCHANGE_CLIENT_ID;
+import static org.dcache.gplazma.tokenx.TokenExchange.PRE_EXCHANGE_CLIENT_SECRET;
+import static org.dcache.gplazma.tokenx.TokenExchange.PRE_EXCHANGE_URL;
 import static org.dcache.gplazma.tokenx.TokenExchange.TOKEN_EXCHANGE_URL;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.equalToIgnoringCase;
@@ -69,6 +73,18 @@ public class TokenExchangeTest {
         String result = plugin.tokenExchange(token);
 
         // System.out.println("result: " + result);
+        assertThat(result, equalToIgnoringCase("valid.access.token"));
+    }
+
+    @Test
+    public void preExchangeTest() throws Exception {
+
+        given(aPlugin().withPreExchange().withAuthorizationServer(aAuthorizationServer().thatExchanges()));
+
+        String token = "assertion-from-upstream-idp";
+
+        String result = plugin.preExchange(token);
+
         assertThat(result, equalToIgnoringCase("valid.access.token"));
     }
 
@@ -146,6 +162,14 @@ public class TokenExchangeTest {
 
         public PluginBuilder withAuthorizationServer(AuthorizationServerBuilder builder) {
             httpClient = builder.build();
+            return this;
+        }
+
+        public PluginBuilder withPreExchange() {
+            properties.put(PRE_EXCHANGE_URL, "https://login.helmholtz.de/oauth2/token");
+            properties.put(PRE_EXCHANGE_CLIENT_ID, "public-oidc-agent");
+            properties.put(PRE_EXCHANGE_CLIENT_SECRET, "secret");
+            properties.put(PRE_EXCHANGE_AUDIENCE, "https://keycloak.desy.de/auth/realms/production");
             return this;
         }
 
