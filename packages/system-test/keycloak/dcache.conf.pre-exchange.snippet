@@ -1,0 +1,28 @@
+# Alternate dcache.conf block for testing the RFC 8693 pre-exchange hop locally.
+# Not consumed automatically by anything -- copy the pre-exchange-* lines below
+# into packages/system-test/target/dcache/etc/dcache.conf (in place of the
+# blank pre-exchange-* defaults) alongside the existing local-KC block, then
+# restart dCacheDomain. See README-pre-exchange.md for the full walkthrough.
+
+# --- gPlazma: JWT Authorization Grant plugin (oidc-te, RFC 7523) ---
+# Same Keycloak realm as the default local stack, but a DEDICATED client
+# (dcache-client-preexchange, not dcache-client): Keycloak 26.6.1's
+# oauth2.jwt.authorization.grant.idp client attribute is single-valued, so a
+# client can only be wired to one identity provider (hidah OR
+# preexchange-mock) at a time. Using a separate client keeps this scenario
+# fully isolated from the default dcache-client / hidah flow.
+gplazma.oidc-te.url = http://localhost:8081/realms/dcache-test/protocol/openid-connect/token
+gplazma.oidc-te.client-id = dcache-client-preexchange
+gplazma.oidc-te.client-secret = dcache-client-preexchange-secret
+
+# --- gPlazma: RFC 8693 pre-exchange hop against the local mock endpoint ---
+# Re-mints a hidah-shared token (aud=shared-client) to aud=preexchange-mock
+# before it's sent to Keycloak above -- without this, Keycloak rejects it
+# directly since its "hidah" IdP link only accepts aud=test-client.
+gplazma.oidc-te.pre-exchange-url = http://localhost:8082/oauth2/token
+gplazma.oidc-te.pre-exchange-client-id = mock-preexchange-client
+gplazma.oidc-te.pre-exchange-client-secret = mock-preexchange-secret
+gplazma.oidc-te.pre-exchange-audience = preexchange-mock
+
+# --- gPlazma: OIDC validation against Keycloak ---
+gplazma.oidc.provider!keycloak-dcache-test = http://localhost:8081/realms/dcache-test -suppress=audience -accept=username

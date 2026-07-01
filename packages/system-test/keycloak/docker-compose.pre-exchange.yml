@@ -1,0 +1,57 @@
+services:
+
+  # Second, independently-configured HiDAH instance. Its tokens carry
+  # aud=shared-client, which the primary Keycloak "hidah" IdP link (configured
+  # for aud=test-client only) does not accept — this is what forces the
+  # RFC 8693 pre-exchange hop (gplazma.oidc-te.pre-exchange-url) to run, unlike
+  # the default local stack where HiDAH's token audience already matches what
+  # Keycloak expects directly.
+  #
+  # Stands in for a shared, multi-service upstream OAuth client (in production:
+  # oidc-agent's "public-oidc-agent" client at Helmholtz AAI).
+  hidah-shared:
+    image: registry.hzdr.de/hifis/cloud/access-layer/cloud-portal/hidah:latest
+    environment:
+      CLIENT_ID: shared-client
+      CLIENT_SECRET: shared-client-secret
+      PUBLIC_CLIENT: "false"
+      OIDC_SCOPES: "openid email profile"
+      OAUTH2_ACCESS_TOKEN_STRATEGY: "jwt"
+      REDIRECT_URI: http://localhost:8998/callback
+      BIND_HOST: "0.0.0.0:8080"
+      EXTERNAL_ADDRESS: "http://localhost:8086"
+      DB_PATH: /hidah/identities
+      PRELOAD_PROFILES_PATH: /hidah/profiles.json
+      PRELOADED_PROFILES_OVERRIDE_STORAGE: "true"
+    tmpfs:
+      - /hidah/identities
+    volumes:
+      - ./hidah-profiles.json:/hidah/profiles.json:ro
+    ports:
+      - "8086:8080"
+
+  # Mock RFC 8693 pre-exchange endpoint. Verifies subject_token against
+  # hidah-shared's real JWKS (genuine signature/issuer/audience check, not a
+  # rubber stamp) and, if valid, re-mints a JWT with a new audience, signed
+  # with its own key. Stands in for the real Helmholtz AAI /oauth2/token
+  # endpoint used by the pre-exchange hop in production.
+  mock-preexchange:
+    build:
+      context: ./mock-preexchange
+    environment:
+      HIDAH_JWKS_URL: http://hidah-shared:8080/oauth2/jwk
+      HIDAH_ISSUER: http://localhost:8086
+      EXPECTED_AUDIENCE: shared-client
+      REMINTED_AUDIENCE: preexchange-mock
+      PRE_EXCHANGE_CLIENT_ID: mock-preexchange-client
+      PRE_EXCHANGE_CLIENT_SECRET: mock-preexchange-secret
+    ports:
+      - "8082:8080"
+    depends_on:
+      - hidah-shared
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
