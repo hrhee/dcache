@@ -28,6 +28,10 @@ cd packages/system-test/keycloak
 # 1. Base stack (unchanged) -- skip if already running
 podman compose up -d
 ./configure-keycloak.sh
+# Apply gplazma.conf.snippet to your dCache instance's gplazma.conf if you
+# haven't already (needed for oidc-te to be in the auth chain at all) --
+# dcache.conf.pre-exchange.snippet below is self-contained and replaces
+# dcache.conf.snippet, so you don't need that one separately.
 
 # 2. Bring up the pre-exchange overlay
 podman compose -f docker-compose.yml -f docker-compose.pre-exchange.yml \
@@ -68,8 +72,9 @@ curl -s -X POST http://localhost:8081/realms/dcache-test/protocol/openid-connect
   --data-urlencode "assertion=$NEW_TOKEN" | python3 -m json.tool
 # Expected: {"access_token": "eyJ...", ...} with preferred_username=testuser inside
 
-# 7. Point dCache at it -- apply dcache.conf.pre-exchange.snippet to
-#    packages/system-test/target/dcache/etc/dcache.conf, then:
+# 7. Point dCache at it -- apply dcache.conf.pre-exchange.snippet (after the
+#    dcache.layout=... line) to packages/system-test/target/dcache/etc/dcache.conf,
+#    then:
 packages/system-test/target/dcache/bin/dcache restart dCacheDomain
 
 # 8. Full end-to-end request

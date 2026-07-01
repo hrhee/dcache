@@ -1,0 +1,10 @@
+# Lines to prepend to packages/system-test/target/dcache/etc/gplazma.conf's auth
+# stanza to enable the JWT Authorization Grant plugin chain. Not consumed
+# automatically by anything -- add these two lines above the existing
+# `auth sufficient x509` line, then restart dCacheDomain.
+#
+# oidc-te is `optional` so that: (a) requests without a bearer token fall
+# through to x509/kpwd/htpasswd, and (b) if the exchange itself fails, oidc
+# can still attempt to validate the original token directly.
+auth    optional    oidc-te
+auth    sufficient  oidc

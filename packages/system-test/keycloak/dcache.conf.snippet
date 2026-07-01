@@ -1,0 +1,18 @@
+# dcache.conf block for testing the JWT Authorization Grant plugin against the
+# local HiDAH + Keycloak dev stack. Not consumed automatically by anything --
+# copy the lines below into packages/system-test/target/dcache/etc/dcache.conf
+# (after the `dcache.layout=system-test` line), then restart dCacheDomain.
+# See the "Local containerized Keycloak" section of CLAUDE.md for the full
+# walkthrough. Kept out of the shipped skel default so that the default
+# system-test instance doesn't unconditionally call out to a Keycloak that
+# most system-test users won't have running.
+
+# --- gPlazma: JWT Authorization Grant plugin (oidc-te, RFC 7523) ---
+# Keycloak token endpoint; the incoming JWT is sent as the assertion.
+gplazma.oidc-te.url = http://localhost:8081/realms/dcache-test/protocol/openid-connect/token
+gplazma.oidc-te.client-id = dcache-client
+gplazma.oidc-te.client-secret = dcache-client-secret
+
+# --- gPlazma: OIDC validation against Keycloak ---
+# Suppress audience check; the Keycloak token aud may be "account" or "dcache-client".
+gplazma.oidc.provider!keycloak-dcache-test = http://localhost:8081/realms/dcache-test -suppress=audience -accept=username

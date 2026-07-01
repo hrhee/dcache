@@ -1,8 +1,11 @@
 # Alternate dcache.conf block for testing the RFC 8693 pre-exchange hop locally.
-# Not consumed automatically by anything -- copy the pre-exchange-* lines below
-# into packages/system-test/target/dcache/etc/dcache.conf (in place of the
-# blank pre-exchange-* defaults) alongside the existing local-KC block, then
-# restart dCacheDomain. See README-pre-exchange.md for the full walkthrough.
+# Not consumed automatically by anything -- this is a complete, self-contained
+# replacement for dcache.conf.snippet (same final Keycloak hop, plus the
+# pre-exchange-* lines). Copy the whole block below into
+# packages/system-test/target/dcache/etc/dcache.conf (after the
+# `dcache.layout=...` line), also apply gplazma.conf.snippet if you haven't
+# already, then restart dCacheDomain. See README-pre-exchange.md for the full
+# walkthrough.
 
 # --- gPlazma: JWT Authorization Grant plugin (oidc-te, RFC 7523) ---
 # Same Keycloak realm as the default local stack, but a DEDICATED client
