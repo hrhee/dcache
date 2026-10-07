@@ -27,6 +27,13 @@
       <property name="excludedDestinations" value="${xrootd.loginbroker.update-topic}"/>
   </bean>
 
+  <bean id="pin-manager-stub" class="org.dcache.cells.CellStub">
+    <description>Pin manager cell stub</description>
+    <property name="timeout" value="${xrootd.service.pinmanager.timeout}"/>
+    <property name="timeoutUnit" value="${xrootd.service.pinmanager.timeout.unit}"/>
+    <property name="destination" value="${xrootd.service.pinmanager}"/>
+  </bean>
+
   <bean id="pnfs-stub" class="org.dcache.cells.CellStub">
     <description>PNFS manager communication stub</description>
     <property name="destination" value="${xrootd.service.pnfsmanager}"/>
@@ -175,6 +182,7 @@
     <description>Gateway between xroot protocol handler and dCache</description>
     <property name="pnfsStub" ref="pnfs-stub"/>
     <property name="poolStub" ref="pool-stub"/>
+    <property name="pinManagerStub" ref="pin-manager-stub"/>
     <property name="poolManagerStub">
       <bean class="org.dcache.poolmanager.PoolManagerStub">
         <property name="handler" ref="pool-manager-handler"/>
@@ -191,6 +199,8 @@
     <property name="ioQueue" value="${xrootd.mover.queue}"/>
     <property name="moverTimeout" value="${xrootd.mover.timeout}"/>
     <property name="moverTimeoutUnit" value="${xrootd.mover.timeout.unit}"/>
+    <property name="pinLifetime" value="${xrootd.pin.lifetime}"/>
+    <property name="pinLifetimeUnit" value="${xrootd.pin.lifetime.unit}"/>
     <property name="executor" ref="scheduled-thread-pool"/>
     <property name="poolMonitor" ref="pool-monitor"/>
     <property name="triedHostsEnabled" value="${xrootd.enable.tried-hosts}"/>
@@ -260,34 +270,4 @@
     <property name="readPaths" value="#{ T(com.google.common.base.Splitter).on(':').omitEmptyStrings().splitToList('${xrootd.authz.read-paths}') }"/>
     <property name="writePaths" value="#{ T(com.google.common.base.Splitter).on(':').omitEmptyStrings().splitToList('${xrootd.authz.write-paths}') }"/>
   </bean>
-
-  <beans profile="kafka-true">
-
-
-    <bean id="listener" class="org.dcache.kafka.LoggingProducerListener"/>
-
-    <bean id="kafka-configs"
-          class="org.dcache.util.configuration.ConfigurationMapFactoryBean">
-      <property name="prefix" value="xrootd.kafka.producer.configs"/>
-      <property name="staticEnvironment" >
-        <map>
-          <entry key="bootstrap.servers" value="${xrootd.kafka.producer.bootstrap.servers}"/>
-          <entry key="key.serializer" value="org.apache.kafka.common.serialization.StringSerializer"/>
-          <entry key="value.serializer" value="org.dcache.notification.DoorRequestMessageSerializer"/>
-          <entry key="client.id" value="${xrootd.cell.name}@${dcache.domain.name}"/>
-        </map>
-      </property>
-
-    </bean>
-
-    <bean id="billing-template" class="org.springframework.kafka.core.KafkaTemplate">
-      <constructor-arg>
-        <bean class="org.springframework.kafka.core.DefaultKafkaProducerFactory">
-            <constructor-arg name="configs" ref ="kafka-configs"/>
-        </bean>
-      </constructor-arg>
-      <property name="defaultTopic" value="${xrootd.kafka.topic}"/>
-      <property name="producerListener" ref="listener"/>
-    </bean>
-  </beans>
 </beans>

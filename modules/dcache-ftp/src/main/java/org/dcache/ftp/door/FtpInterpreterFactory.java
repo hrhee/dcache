@@ -51,21 +51,16 @@ public abstract class FtpInterpreterFactory implements NettyLineBasedInterpreter
         OptionParser options = new OptionParser(args);
         options.inject(settings);
         options.inject(this);
-        if (settings.isKafkaEnabled) {
-            settings.createKafkaProducer();
-            LOGGER.info("Creating KafkaProducer");
-
-        }
     }
 
     @Override
     public LineBasedInterpreter create(CellEndpoint endpoint, CellAddressCore myAddress,
-          InetSocketAddress remoteAddress, InetSocketAddress proxyAddress,
-          InetSocketAddress localAddress,
-          LineWriter writer, Executor executor, PoolManagerHandler poolManagerHandler,
-          IdentityResolverFactory idResolverFactory,
-          LoadingCache<GetSpaceTokensKey, long[]> spaceDescriptionCache,
-          LoadingCache<String, Optional<Space>> spaceLookupCache)
+                                       InetSocketAddress remoteAddress, InetSocketAddress proxyAddress,
+                                       InetSocketAddress localAddress,
+                                       LineWriter writer, Executor executor, PoolManagerHandler poolManagerHandler,
+                                       IdentityResolverFactory idResolverFactory,
+                                       LoadingCache<GetSpaceTokensKey, long[]> spaceDescriptionCache,
+                                       LoadingCache<String, Optional<Space>> spaceLookupCache)
           throws Exception {
         AbstractFtpDoorV1 interpreter = createInterpreter();
         interpreter.setSettings(settings);
@@ -86,9 +81,6 @@ public abstract class FtpInterpreterFactory implements NettyLineBasedInterpreter
 
     @Override
     public void destroy() {
-        if (settings.isKafkaEnabled) {
-            settings.destroy();
-            LOGGER.info("Shutdow KafkaProducer");
-        }
+        //ToDO nothing to do here, but the interface requires it
     }
 }

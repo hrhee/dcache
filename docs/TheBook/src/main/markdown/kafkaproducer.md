@@ -51,15 +51,13 @@ Set kafka topic name
 dcache.kafka.topic = billing
 ```
 
-"billing" is default. The following serice level variables
-reference dcache.kafka.topic:
+"billing" is default.
 
-   dcap.kafka.topic = ${dcache.kafka.topic}
-   ftp.kafka.topic = ${dcache.kafka.topic}
-   nfs.kafka.topic = ${dcache.kafka.topic}
-   pool.kafka.topic = ${dcache.kafka.topic}
-   webdav.kafka.topic = ${dcache.kafka.topic}
-   xrootd.kafka.topic = ${dcache.kafka.topic}
+
+**Note** that doors no longer supports pushing messages to Kafka; the
+producer for doors has been removed and any `nfs/ftp/webdav.kafka.*` properties are now
+obsolete.
+
 
 ### 3. Start Server
 

@@ -18,7 +18,6 @@ import static org.dcache.namespace.FileType.REGULAR;
 import static org.dcache.util.MathUtils.addWithInfinity;
 import static org.dcache.util.MathUtils.subWithInfinity;
 
-import com.google.common.base.Throwables;
 import com.google.common.collect.Sets;
 import com.google.common.io.BaseEncoding;
 import com.google.common.primitives.Longs;
@@ -76,7 +75,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 import javax.security.auth.Subject;
@@ -98,7 +96,6 @@ import org.dcache.vehicles.PnfsGetFileAttributes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
-import org.springframework.kafka.KafkaException;
 
 /**
  * Facade for transfer related operations. Encapsulates information about and typical operations of
@@ -161,10 +158,6 @@ public class Transfer implements Comparable<Transfer> {
           EnumSet.noneOf(FileAttribute.class);
 
     private MoverInfoMessage moverInfoMessage;
-
-    private Consumer<DoorRequestInfoMessage> _kafkaSender = (s) -> {
-    };
-
 
     private static final ThreadFactory RETRY_THREAD_FACTORY =
           new ThreadFactoryBuilder().setDaemon(true).setNameFormat("transfer-retry-timer-%d")
@@ -316,10 +309,6 @@ public class Transfer implements Comparable<Transfer> {
      */
     public synchronized void setBillingStub(CellStub stub) {
         _billing = requireNonNull(stub, "Billing stub can't be null");
-    }
-
-    public synchronized void setKafkaSender(Consumer<DoorRequestInfoMessage> kafkaSender) {
-        _kafkaSender = kafkaSender;
     }
 
     public synchronized void
@@ -618,6 +607,11 @@ public class Transfer implements Comparable<Transfer> {
         return _cellAddress.getCellDomainName();
     }
 
+    private synchronized String getMessageEventSource() {
+        return _cellAddress == null ? "<unknown>" :
+              _cellAddress.getCellName() + "@" + _cellAddress.getCellDomainName();
+    }
+
     /**
      * The client address is the socket address from which the transfer was initiated.
      */
@@ -821,7 +815,7 @@ public class Transfer implements Comparable<Transfer> {
         request.setUpdateAtime(true);
 
         MessageEvent nameSpaceReadEvent = new MessageEvent();
-        nameSpaceReadEvent.source = getCellName() + "@" + getDomainName();
+        nameSpaceReadEvent.source = getMessageEventSource();
         nameSpaceReadEvent.destination = "PnfsManager";
         nameSpaceReadEvent.message = PnfsGetFileAttributes.class.getSimpleName();
         nameSpaceReadEvent.begin();
@@ -996,7 +990,7 @@ public class Transfer implements Comparable<Transfer> {
 
         // init JFR event
         MessageEvent poolSelectEvent = new MessageEvent();
-        poolSelectEvent.source = getCellName() + "@" + getDomainName();
+        poolSelectEvent.source = getMessageEventSource();
         poolSelectEvent.destination = "PoolManager";
         poolSelectEvent.message = isWrite() ? PoolMgrSelectReadPoolMsg.class.getSimpleName() : PoolMgrSelectWritePoolMsg.class.getSimpleName();
         poolSelectEvent.begin();
@@ -1068,6 +1062,7 @@ public class Transfer implements Comparable<Transfer> {
 
     /**
      * Creates a mover for the transfer.
+     * @param timeout timeout in milliseconds
      */
     public ListenableFuture<Void> startMoverAsync(long timeout) {
         FileAttributes fileAttributes = getFileAttributes();
@@ -1102,7 +1097,7 @@ public class Transfer implements Comparable<Transfer> {
 
         // init JFR event
         MessageEvent moverStartEvent = new MessageEvent();
-        moverStartEvent.source = getCellName() + "@" + getDomainName();
+        moverStartEvent.source = getMessageEventSource();
         moverStartEvent.destination = pool.getName();
         moverStartEvent.message = message.getClass().getSimpleName();
         moverStartEvent.begin();
@@ -1169,7 +1164,7 @@ public class Transfer implements Comparable<Transfer> {
 
             // init JFR event
             var killMoverEvent = new MessageEvent();
-            killMoverEvent.source = getCellName() + "@" + getDomainName();
+            killMoverEvent.source = getMessageEventSource();
             killMoverEvent.destination = pool.getName();
             killMoverEvent.message = message.getClass().getSimpleName();
 
@@ -1276,17 +1271,11 @@ public class Transfer implements Comparable<Transfer> {
         if (_fileAttributes.isDefined(STORAGEINFO)) {
             msg.setStorageInfo(_fileAttributes.getStorageInfo());
         }
+        msg.setMoverInfo(moverInfoMessage);
+
         _billing.notify(msg);
 
         _isBillingNotified = true;
-
-        msg.setMoverInfo(moverInfoMessage);
-
-        try {
-            _kafkaSender.accept(msg);
-        } catch (KafkaException | org.apache.kafka.common.KafkaException e) {
-            _log.warn("Failed to send message to kafka: {} ", Throwables.getRootCause(e).getMessage());
-        }
     }
 
     private static long getTimeoutFor(long deadline) {

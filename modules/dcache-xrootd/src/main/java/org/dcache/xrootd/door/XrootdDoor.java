@@ -18,6 +18,7 @@
 package org.dcache.xrootd.door;
 
 import static diskCacheV111.util.MissingResourceCacheException.checkResourceNotMissing;
+import static diskCacheV111.util.RetentionPolicy.CUSTODIAL;
 import static java.util.Objects.requireNonNull;
 import static org.dcache.namespace.FileAttribute.CHECKSUM;
 import static org.dcache.namespace.FileAttribute.MODIFICATION_TIME;
@@ -37,7 +38,6 @@ import static org.dcache.xrootd.protocol.XrootdProtocol.kXR_writable;
 import static org.dcache.xrootd.protocol.XrootdProtocol.kXR_xset;
 
 import com.google.common.base.Splitter;
-import com.google.common.base.Throwables;
 import com.google.common.collect.Range;
 import diskCacheV111.poolManager.PoolMonitorV5;
 import diskCacheV111.util.CacheException;
@@ -47,6 +47,7 @@ import diskCacheV111.util.FsPath;
 import diskCacheV111.util.PermissionDeniedCacheException;
 import diskCacheV111.util.PnfsHandler;
 import diskCacheV111.util.PnfsId;
+import diskCacheV111.util.ServiceUnavailableException;
 import diskCacheV111.vehicles.DoorRequestInfoMessage;
 import diskCacheV111.vehicles.DoorTransferFinishedMessage;
 import diskCacheV111.vehicles.IoDoorEntry;
@@ -54,6 +55,7 @@ import diskCacheV111.vehicles.IoDoorInfo;
 import diskCacheV111.vehicles.PnfsCreateUploadPath;
 import diskCacheV111.vehicles.PoolIoFileMessage;
 import diskCacheV111.vehicles.PoolMoverKillMessage;
+import diskCacheV111.vehicles.ProtocolInfo;
 import dmg.cells.nucleus.AbstractCellComponent;
 import dmg.cells.nucleus.CellCommandListener;
 import dmg.cells.nucleus.CellInfoProvider;
@@ -90,7 +92,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Consumer;
 import javax.annotation.concurrent.GuardedBy;
 import javax.security.auth.Subject;
 import org.dcache.acl.enums.AccessType;
@@ -110,6 +111,8 @@ import org.dcache.namespace.FileAttribute;
 import org.dcache.namespace.FileType;
 import org.dcache.namespace.PermissionHandler;
 import org.dcache.namespace.PosixPermissionHandler;
+import org.dcache.pinmanager.PinManagerPinMessage;
+import org.dcache.pinmanager.PinManagerUnpinMessage;
 import org.dcache.poolmanager.PoolManagerStub;
 import org.dcache.poolmanager.PoolMonitor;
 import org.dcache.util.Checksum;
@@ -136,11 +139,7 @@ import org.dcache.xrootd.util.ParseException;
 import org.dcache.xrootd.util.ServerProtocolFlags;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Required;
-import org.springframework.kafka.KafkaException;
-import org.springframework.kafka.core.KafkaTemplate;
 
 /**
  * Shared cell component used to interface with the rest of dCache.
@@ -172,12 +171,18 @@ public class XrootdDoor
 
     private static final TransferRetryPolicy RETRY_POLICY = tryOnce().doNotTimeout();
 
+    public static final Set<FileAttribute> REQUIRED_ATTRIBUTES = Collections
+          .unmodifiableSet(EnumSet.of(FileAttribute.PNFSID, FileAttribute.TYPE,
+                FileAttribute.OWNER_GROUP, FileAttribute.OWNER, FileAttribute.ACCESS_LATENCY,
+                FileAttribute.RETENTION_POLICY));
+
     private List<FsPath> _readPaths = Collections.singletonList(FsPath.ROOT);
     private List<FsPath> _writePaths = Collections.singletonList(FsPath.ROOT);
 
     private CellStub _pnfsStub;
     private CellStub _poolStub;
     private PoolManagerStub _poolManagerStub;
+    private CellStub pinManagerStub;
     private CellStub _billingStub;
 
     private PoolMonitor _poolMonitor;
@@ -189,6 +194,9 @@ public class XrootdDoor
     private int _moverTimeout = 180000;
     private TimeUnit _moverTimeoutUnit = TimeUnit.MILLISECONDS;
 
+    private int pinLifetime = 12;
+    private TimeUnit pinLifetimeUnit = TimeUnit.HOURS;
+
     private PnfsHandler _pnfs;
 
     private String _ioQueue;
@@ -197,9 +205,6 @@ public class XrootdDoor
           new ConcurrentHashMap<>();
 
     private ScheduledExecutorService _scheduledExecutor;
-
-    private Consumer<DoorRequestInfoMessage> _kafkaSender = (s) -> {
-    };
 
     @GuardedBy("this")
     private Optional<LoginBrokerInfo> _loginBrokerInfo = Optional.empty();
@@ -230,12 +235,6 @@ public class XrootdDoor
 
     private UnionLoginStrategy.AccessLevel anonymousUserAccess = AccessLevel.NONE;
 
-    @Autowired(required = false)
-    private void setKafkaTemplate(
-          @Qualifier("billing-template") KafkaTemplate kafkaTemplate) {
-        _kafkaSender = kafkaTemplate::sendDefault;
-    }
-
     public void setProxyGroups(EventLoopGroup acceptGroup, EventLoopGroup socketGroup,
           EventLoopGroup clientGroup) {
         this.acceptGroup = acceptGroup;
@@ -264,6 +263,11 @@ public class XrootdDoor
     @Required
     public void setProxyResponseTimeoutInSeconds(int proxyResponseTimeoutInSeconds) {
         this.proxyResponseTimeoutInSeconds = proxyResponseTimeoutInSeconds;
+    }
+
+    @Required
+    public void setPinManagerStub(CellStub pinManagerStub) {
+        this.pinManagerStub = pinManagerStub;
     }
 
     @Required
@@ -408,6 +412,30 @@ public class XrootdDoor
         _moverTimeoutUnit = requireNonNull(unit);
     }
 
+    /**
+     * Returns the pin lifetime on prepare call.
+     */
+    public int getPinLifetime() {
+        return pinLifetime;
+    }
+
+    /**
+     * Pin lifetime on prepare call.
+     *
+     * @param lifetime The pin lifetime in hours.
+     */
+    @Required
+    public void setPinLifetime(int lifetime) {
+        if (lifetime < 0) {
+            throw new IllegalArgumentException("Pin lifetime must be positive or 0");
+        }
+        pinLifetime = lifetime;
+    }
+
+    public void setPinLifetimeUnit(TimeUnit unit) {
+        pinLifetimeUnit = requireNonNull(unit);
+    }
+
     @Required
     public void setTriedHostsEnabled(boolean triedHostsEnabled) {
         this.triedHostsEnabled = triedHostsEnabled;
@@ -517,7 +545,6 @@ public class XrootdDoor
         }
         transfer.setIoQueue(ioQueue == null ? _ioQueue : ioQueue);
         transfer.setFileHandle(_handleCounter.getAndIncrement());
-        transfer.setKafkaSender(_kafkaSender);
         transfer.setTriedHosts(tried);
         transfer.setProxiedTransfer(proxied);
         transfer.logSciTagsRequest(opaque);
@@ -738,12 +765,6 @@ public class XrootdDoor
             infoRemove.setClient(origin.getAddress().getHostAddress());
         }
         _billingStub.notify(infoRemove);
-
-        try {
-            _kafkaSender.accept(infoRemove);
-        } catch (KafkaException | org.apache.kafka.common.KafkaException e) {
-            _log.warn("Failed to send message to kafka: {} ", Throwables.getRootCause(e).getMessage());
-        }
     }
 
     /**
@@ -1208,6 +1229,45 @@ public class XrootdDoor
         return flags;
     }
 
+    public void pin(FsPath[] paths, InetSocketAddress client, Subject subject,
+          Restriction restriction) throws CacheException {
+        PnfsHandler pnfsHandler = new PnfsHandler(_pnfs, subject, restriction);
+        for (FsPath path : paths) {
+            PnfsId pnfsId = pnfsHandler.getPnfsIdByPath(path.toString());
+            FileAttributes attr = pnfsHandler.getFileAttributes(path, REQUIRED_ATTRIBUTES);
+            if (attr.getRetentionPolicy() != CUSTODIAL || attr.getFileType() != FileType.REGULAR) {
+                continue;
+            }
+            ProtocolInfo protocolInfo = new XrootdProtocolInfo(XROOTD_PROTOCOL_STRING,
+                  XrootdProtocol.PROTOCOL_VERSION_MAJOR, XrootdProtocol.PROTOCOL_VERSION_MINOR,
+                  client, new CellPath(getCellName(), getCellDomainName()), pnfsId, 0, null, null);
+            long lifetime = pinLifetimeUnit.toMillis(pinLifetime);
+            try {
+                PinManagerPinMessage message = new PinManagerPinMessage(attr, protocolInfo,
+                      restriction, getRequestId(subject), lifetime);
+                message.setReplyWhenStarted(true);
+                pinManagerStub.sendAndWait(message);
+            } catch (NoRouteToCellException | InterruptedException e) {
+                throw new ServiceUnavailableException(e.getMessage());
+            }
+        }
+    }
+
+    public void unpin(FsPath[] paths, Subject subject, Restriction restriction)
+          throws CacheException {
+        PnfsHandler pnfsHandler = new PnfsHandler(_pnfs, subject, restriction);
+        for (FsPath path : paths) {
+            PnfsId pnfsId = pnfsHandler.getPnfsIdByPath(path.toString());
+            try {
+                PinManagerUnpinMessage message = new PinManagerUnpinMessage(pnfsId);
+                message.setRequestId(getRequestId(subject));
+                pinManagerStub.sendAndWait(message);
+            } catch (NoRouteToCellException | InterruptedException e) {
+                throw new ServiceUnavailableException(e.getMessage());
+            }
+        }
+    }
+
     public int nextTpcPlaceholder() {
         synchronized (_tpcFdIndex) {
             Integer next = _tpcPlaceholder.getAndIncrement();
@@ -1342,5 +1402,13 @@ public class XrootdDoor
             }
             return String.format("Mover %s not found on pool %s.", id, pool);
         }
+    }
+
+    private String getRequestId(Subject subject) throws PermissionDeniedCacheException {
+        if (Subjects.isNobody(subject)) {
+            throw new PermissionDeniedCacheException("cannot get request id for user.");
+        }
+
+        return String.valueOf(Subjects.getUid(subject));
     }
 }

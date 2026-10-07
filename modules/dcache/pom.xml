@@ -309,10 +309,6 @@
         <groupId>org.apache.httpcomponents</groupId>
         <artifactId>httpclient</artifactId>
     </dependency>
-      <dependency>
-          <groupId>org.jdom</groupId>
-          <artifactId>jdom</artifactId>
-      </dependency>
     <dependency>
         <groupId>org.glassfish.jersey.media</groupId>
         <artifactId>jersey-media-json-jackson</artifactId>
@@ -349,15 +345,7 @@
           <groupId>org.springframework.kafka</groupId>
           <artifactId>spring-kafka</artifactId>
       </dependency>
-      <dependency>
-          <groupId>org.springframework.integration</groupId>
-          <artifactId>spring-integration-kafka</artifactId>
-      </dependency>
 
-      <dependency>
-          <groupId>org.apache.kafka</groupId>
-          <artifactId>kafka_2.12</artifactId>
-      </dependency>
       <dependency>
           <groupId>org.apache.kafka</groupId>
           <artifactId>kafka-clients</artifactId>

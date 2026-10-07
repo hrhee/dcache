@@ -75,8 +75,11 @@ import javax.ws.rs.Path;
 import javax.ws.rs.PathParam;
 import javax.ws.rs.Produces;
 import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.Response;
+
 import org.dcache.cells.json.DomainData;
 import org.dcache.restful.services.cells.DomainInfoService;
+import org.dcache.restful.util.Responses;
 import org.springframework.stereotype.Component;
 
 /**
@@ -97,11 +100,12 @@ public final class DomainInfoResources {
           @ApiResponse(code = 403, message = "Domain info service only accessible to admin users."),
     })
     @Produces(MediaType.APPLICATION_JSON)
-    public DomainData[] getDomains() {
-        return Arrays.stream(service.getAddresses())
+    public Response getDomains() {
+        DomainData[] result = Arrays.stream(service.getAddresses())
               .map(service::getDomainData)
               .sorted(Comparator.comparing(DomainData::getDomainName))
               .toArray(DomainData[]::new);
+        return Responses.buildResponse(result, service.getLastUpdated());
     }
 
     @GET
@@ -112,13 +116,14 @@ public final class DomainInfoResources {
     })
     @Path("/{domain}")
     @Produces(MediaType.APPLICATION_JSON)
-    public DomainData getDomain(
+    public Response getDomain(
           @ApiParam(value = "The domain name to query", example = "dCacheDomain")
           @PathParam("domain") String domain) {
         Set<String> known = Set.of(service.getAddresses());
         if (!known.contains(domain)) {
             throw new NotFoundException("Domain not found: " + domain);
         }
-        return service.getDomainData(domain);
+        DomainData domainData = service.getDomainData(domain);
+        return Responses.buildResponse(domainData, service.getLastUpdated());
     }
 }

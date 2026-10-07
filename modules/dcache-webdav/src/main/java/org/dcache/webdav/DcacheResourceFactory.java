@@ -97,7 +97,6 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.UnknownHostException;
-import java.security.AccessController;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -113,13 +112,13 @@ import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Consumer;
 import javax.annotation.PostConstruct;
 import javax.security.auth.Subject;
 import javax.servlet.http.HttpServletRequest;
 import javax.xml.stream.XMLOutputFactory;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamWriter;
+
 import org.dcache.auth.Origin;
 import org.dcache.auth.RolePrincipal;
 import org.dcache.auth.RolePrincipal.Role;
@@ -158,10 +157,7 @@ import org.dcache.webdav.transfer.RemoteTransferHandler;
 import org.eclipse.jetty.io.EofException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Required;
-import org.springframework.kafka.KafkaException;
-import org.springframework.kafka.core.KafkaTemplate;
 import org.stringtemplate.v4.AutoIndentWriter;
 import org.stringtemplate.v4.ST;
 
@@ -289,17 +285,9 @@ public class DcacheResourceFactory
     private PoolMonitor _poolMonitor;
     private boolean _redirectToHttps;
 
-    private Consumer<DoorRequestInfoMessage> _kafkaSender = (s) -> {
-    };
-
     public DcacheResourceFactory()
           throws UnknownHostException {
         _internalAddress = InetAddress.getLocalHost();
-    }
-
-    @Autowired(required = false)
-    private void setTransferTemplate(KafkaTemplate kafkaTemplate) {
-        _kafkaSender = kafkaTemplate::sendDefault;
     }
 
     @Required
@@ -663,6 +651,21 @@ public class DcacheResourceFactory
                           buildRequestedAttributes();
                     FileAttributes attributes =
                           pnfs.getFileAttributes(path.toString(), requestedAttributes);
+                    if(isDigestRequested()
+                            && attributes.getChecksums().isEmpty()
+                            && !attributes.getFileType().equals(DIR)) {
+                        int retry = 10;
+                        do{
+                            attributes = pnfs.getFileAttributes(path.toString(), requestedAttributes);
+                            if(!attributes.getChecksums().isEmpty()) break;
+                            retry--;
+                            try{
+                                MILLISECONDS.sleep(500);
+                            } catch (InterruptedException e) {
+                                break;
+                            }
+                        } while(retry > 0);
+                    }
                     return getResource(path, attributes);
                 } catch (FileNotFoundCacheException e) {
                     if (haveRetried) {
@@ -1267,12 +1270,6 @@ public class DcacheResourceFactory
         infoRemove.setFileSize(attributes.getSizeIfPresent().orElse(0L));
         infoRemove.setClient(Subjects.getOrigin(subject).getAddress().getHostAddress());
         _billingStub.notify(infoRemove);
-
-        try {
-            _kafkaSender.accept(infoRemove);
-        } catch (KafkaException | org.apache.kafka.common.KafkaException e) {
-            LOGGER.warn("Failed to send message to kafka: {} ", Throwables.getRootCause(e).getMessage());
-        }
     }
 
     /**
@@ -1572,8 +1569,8 @@ public class DcacheResourceFactory
         return args.hasOption("binary") ? doorInfo : doorInfo.toString();
     }
 
-    private void initializeTransfer(HttpTransfer transfer, Subject subject)
-          throws URISyntaxException {
+    private void initializeTransfer(HttpTransfer transfer)
+            throws URISyntaxException {
         transfer.setLocation(getLocation());
         transfer.setCellAddress(getCellAddress());
         transfer.setPoolManagerStub(_poolManagerStub);
@@ -1585,7 +1582,6 @@ public class DcacheResourceFactory
                     ServletRequest.getRequest().getRemoteAddr()),  ServletRequest.getRequest().getRemotePort())
         ));
         transfer.setOverwriteAllowed(_isOverwriteAllowed);
-        transfer.setKafkaSender(_kafkaSender);
         transfer.setZone(_zone);
     }
 
@@ -1739,7 +1735,7 @@ public class DcacheResourceFactory
         public HttpTransfer(PnfsHandler pnfs, Subject subject,
               Restriction restriction, FsPath path) throws URISyntaxException {
             super(pnfs, subject, restriction, path);
-            initializeTransfer(this, subject);
+            initializeTransfer(this);
             _clientAddressForPool = getClientAddress();
 
             var request = ServletRequest.getRequest();
